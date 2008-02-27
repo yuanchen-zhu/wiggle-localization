@@ -11,7 +11,8 @@ from util import *
 EPS = 1e-12
 
 def print_info(s):
-    print "\t\t\t\t\tINFO:",  s
+    sys.stderr.write("INFO:%s\n" % s)
+    sys.stderr.flush()
 
 def build_edgeset(p, max_dist, min_dist):
     """
@@ -141,43 +142,61 @@ class NotLocallyRigid(Exception):
 class NotGloballyRigid(Exception):
     pass
 
-def plot_info(name_param, cov_spec, t, stress_spec, d, p, approx_p, v, E):
-    margin = 0.05
-    width = (1.0 - margin * 4.0) / 3.0
-    height = 1.0 - margin * 2.0
 
-    figure(figsize=(12,4))
+figure(figsize=(12,8))
+
+def plot_info(stats, cov_spec, t, stress_spec, d, p, approx_p, approx_p2, v, E):
+    margin = 0.05
+    width = 1.0/3.0
+    height = (1.0-margin*2)/2.0
+
     clf()
 
+    axes([0,0,1,1-margin*2], frameon=False)
+    title('Noise:%.04f   Kern.:%.04f   Sampling:%2.02f' % (stats["noise"], stats["kernel"], stats["sampling"]))
+    figtext(width*2-margin, height*2-margin*1.5,
+            'aff. err: %.06f\naff. L-error: %.06f' % (stats["af g error"], stats["af l error"]), ha = "right", va = "top", color = "green")
+    figtext(width*3-margin*2, height*2-margin*1.5,
+            'err: %.06f\nL-error: %.06f' % (stats["l g error"], stats["l l error"]), ha = "right", va = "top", color = "red")
+
+    
     #Graph the spectral distribution of the covariance matrix
-    axes([margin, margin, width, height])
+    axes([margin, margin, width-margin*2, height-margin*2])
     semilogy()
     plot(xrange(len(cov_spec)),cov_spec)
     axvline(t)
-    axis([0, 300, 0.001, 1000])
+    axis([0, 300, 1e-4, 1e1])
     gca().set_aspect('auto')
+    title("Cov. Spec.")
 
     #Graph the spectral distribution of the stress matrix
-    axes([margin*2+width, margin, width, height])
+    axes([margin, height+margin, width-margin*2, height-margin*2])
     loglog()
-    plot(xrange(1, len(stress_spec)), stress_spec[1:])
+    plot(xrange(1, 1 + len(stress_spec)), stress_spec)
     axvline(d)
-    axis([1, v, 1e-8, 1e0])
+    axvline(d+1)
+    axis([1, 1+len(stress_spec), 1e-2, 1e2 ])
     gca().set_aspect('auto')
+    title("Agg. Stress Kern. Spec.")
 
     #Graph the geometry
-    axes([margin*3+width*2, margin, width, height])
-    scatter(x = approx_p[0].A.ravel(), y = approx_p[1].A.ravel(), s = 32, linewidth=(0.0), c = "r", marker = 'o', zorder=100)
-    scatter(x = p[0].A.ravel(), y = p[1].A.ravel(), s = 32, linewidth=(0.0), c = "b", marker = 'o', zorder =101)
+    axes([margin+width, margin, width*2-margin*2, height*2-margin*2])
+    title("Error")
+    scatter(x = approx_p2[0].A.ravel(), y = approx_p2[1].A.ravel(), s = 32, linewidth=(0.0), c = "green", marker = 'o', zorder=99, alpha=0.75)
+    scatter(x = approx_p[0].A.ravel(), y = approx_p[1].A.ravel(), s = 32, linewidth=(0.0), c = "r", marker = 'o', zorder=100, alpha=0.75)
+    scatter(x = p[0].A.ravel(), y = p[1].A.ravel(), s = 32, linewidth=(0.0), c = "b", marker = 'o', zorder =102, alpha=1)
     axis([-0.2, 1.2, -0.2, 1.2])
     gca().set_aspect('equal')
 
-    gca().add_collection(LineCollection([p.T[e] for e in E], colors = "lightgrey"))
-    gca().add_collection(LineCollection([(approx_p.T[i].A.ravel(), p.T[i].A.ravel()) for i in xrange(v)], colors = "green"))
+    gca().add_collection(LineCollection([p.T[e] for e in E], colors = "lightgrey", alpha=0.75))
+    gca().add_collection(LineCollection([(approx_p2.T[i].A.ravel(), p.T[i].A.ravel()) for i in xrange(v)], colors = "green", alpha=0.75))
+    gca().add_collection(LineCollection([(approx_p.T[i].A.ravel(), p.T[i].A.ravel()) for i in xrange(v)], colors = "red", alpha=0.75))
 
-    savefig('infoplot-%s.png' % name_param)
+    fn = 'infoplot-n%.04f-k%.04f-s%2.02f.png' % (stats["noise"], stats["kernel"], stats["sampling"])
+    savefig(fn)
 
-def graph_scale(g, kernel_ratio, noise_std, sampling_ratio):
+
+def graph_scale(g, kernel, noise_std, sampling):
     p, E = g
     v, d, e = v_d_e_from_graph(g)
     
@@ -190,13 +209,13 @@ def graph_scale(g, kernel_ratio, noise_std, sampling_ratio):
     elif rig == "L": raise NotGloballyRigid()
 
     # Now esimate the tangent plane
-    N_samples = int(t * sampling_ratio)
+    N_samples = int(t * sampling)
     print_info("#samples = %d" % N_samples)
     
     #DL_of_deltas = asmatrix(zeros((e, N_samples), 'd'))
 
     #for i in range(N_samples):
-    #    delta = (asmatrix(random.random((d,v))) - 0.5) * (kernel_ratio * 2)
+    #    delta = (asmatrix(random.random((d,v))) - 0.5) * (kernel * 2)
     #    for j in range(n_measure):
     #        DL_of_deltas[:,i] += noisy_L(p + delta, E) - noisy_L(p, E)
     #    DL_of_deltas[:,i] /= n_measure
@@ -205,7 +224,7 @@ def graph_scale(g, kernel_ratio, noise_std, sampling_ratio):
     DL_of_deltas[:,0] = L(p, E, noise_std)
     for i in xrange(N_samples):
         delta = asmatrix(random.random((d,v))) - 0.5
-        delta *= (kernel_ratio*2)
+        delta *= (kernel*2)
         DL_of_deltas[:,i+1] = L(p + delta, E, noise_std)
     
     #mean = DL_of_deltas.mean(axis=1)
@@ -216,55 +235,65 @@ def graph_scale(g, kernel_ratio, noise_std, sampling_ratio):
     T_of_p_basis = u[:,:t]
     S_of_p_basis = u[:,t:]
 
-    # Try to find a good stress matrix (i.e., with a clear difference
-    # between the d'th and d+1'th eigenvalue (0-based indexing)
-    stress_tries = 0
-    maxratio = 0.0
-    while stress_tries < 5 and stress_tries < e-t:
-        #w = S_of_p_basis * asmatrix(random.random((e - t,1)))
-        w = S_of_p_basis[:, -stress_tries-1]
-        w /= norm(w)
+    # Find stress matrix kernel
+    ssd = S_of_p_basis.shape[1]         # stress space dimension
+    stress_kernel = zeros((v, ssd * d))
+
+    print_info("stress space dim = %d" % ssd)
+    for i in xrange(ssd):
+        w = S_of_p_basis[:, i]
         omega = stress_matrix_from_vector(w, E, v)
-        eigval, evec = eig(omega)
-
-        abs_eigval = abs(eigval)
-
-        order =  range(v)
-        order.sort(key = lambda i: abs_eigval[i])
-
-        r = abs_eigval[order[d + 1]] / abs_eigval[order[d]]
-        if r > maxratio:
-            maxratio = r
-            eigvec = evec[:, order]
-            abseig = abs_eigval[:, order]
-
-        if r > 20.0:
-            break
-        stress_tries = stress_tries + 1
-
+        eigval, eigvec = eig(omega)
+        eigval = abs(eigval)
     
-    print_info("eigval[d+1]/eigval[d] = %g" % maxratio)
+        order =  range(v)
+        order.sort(key = lambda i: eigval[i])
+        stress_kernel[:,i*d : i*d+d] = eigvec[:,order[1:d+1]]
 
-    q = asmatrix(vstack([(eigvec[:,i]).T for i in xrange(d)]))
+    stress_kernel_basis, ev, whatever = svd(stress_kernel)
+
+    # basic vector
+    q = asmatrix(stress_kernel_basis.T[:d, :])
+
+    # best affine approximation
     A = optimal_affine(q, p)
-    approx_p = (A * homogenous_vectors(q))[:d,:]
-    diff = p - approx_p 
+    af_approx = (A * homogenous_vectors(q))[:d,:]
 
+    # best l approximation
+    B = optimal_linear_transform_for_l(q, E, DL_of_deltas[:,0])
+    q = B * q
+    A = optimal_rigid(q, p)
+    l_approx = (A * homogenous_vectors(q))[:d,:]
 
+    l = L(p, E, 0)
+    def avg_error(e, n):
+        return math.sqrt(e * e / n)
+    
+    af_g_error = avg_error(norm(p - af_approx), v)
+    af_l_error = avg_error(norm(l - L(af_approx, E, 0)), e)
+
+    l_g_error = avg_error(norm(p - l_approx), v)
+    l_l_error = avg_error(norm(l- L(l_approx, E, 0)), e)
+    
     # plot the info
-    plot_info(name_param = 'noise-%.06f-ker-%.06f-sampling-%.04d'
-              % (noise_std, kernel_ratio, sampling_ratio),
+
+    stats = {"noise":noise_std,
+             "kernel":kernel,
+             "sampling":sampling,
+             "l g error": l_g_error,
+             "l l error": l_l_error,
+             "af g error": af_g_error,
+             "af l error": af_l_error}
+    
+    plot_info(stats,
               cov_spec = s, t = t,
-              stress_spec = abseig, d = d,
-              p = p, approx_p = approx_p, v = v, E = E)
+              stress_spec = ev, d = d,
+              p = p, approx_p = l_approx, approx_p2 = af_approx, v = v, E = E)
 
-    error = norm(diff)
-    avg_error = math.sqrt(error * error / v)
-    print_info("Average per-point error: %g\n" % avg_error)
     sys.stdout.flush()
-    return avg_error
+    return af_g_error
 
-def graph_scale_directional(g, kernel_ratio, noise_std, sampling_ratio):
+def graph_scale_directional(g, kernel, noise_std, sampling):
     p, E = g
     v, d, e = v_d_e_from_graph(g)
 
@@ -279,23 +308,17 @@ def main():
     print "#V = %d  D = %d  dist_ratio = %g  n_tests = %d " % (v, d, ratio, n_tests)
     print "%12s; %12s; %12s; %12s; %12s" % ("perturb", "noise dev", "samp. ratio", "err. mean", "err. dev") 
 
-    #for noise_std in map(lambda x:0.0001 * pow(2,x/2.0) - 0.0001, xrange(16)):
-    #    for kern in map(lambda x:0.0001 * pow(2,x/2.0), xrange(16)):
-    #for noise_std in map(lambda x:0.00001 * pow(2,x/1.5) - 0.00001, xrange(16)):
-    #    for kern in map(lambda x:0.05/16.0 * x+0.0001, xrange(17)):
-    #for noise_std in [0.0000001]:
     g = random_graph(v, d, ratio, 0.01)
-    for noise_std in [0, 0.001]:
-        for sampling_ratio in [2, 4, 8, 16, 32]:
-            for kern in map(lambda x:0.05/16.0 * (x)+0.0001, [6]):
+    for noise_std in [0, 0.001, 0.002, 0.004]:
+        for kern_ratio in [4, 6, 9, 14, 21]:
+            for sampling in [1, 1.5, 2, 4, 8]:
                 e = graph_scale(g = g, 
-                                kernel_ratio=kern,
+                                kernel=max(1e-4, noise_std * kern_ratio),
                                 noise_std = noise_std, 
-                                sampling_ratio = sampling_ratio)
-
-                print "%12.8f; %12.8f; %12.8f; %12.8f" % (kern, noise_std, sampling_ratio, e)
+                                sampling = sampling)
                 sys.stdout.flush()
-        print ""
+            if noise_std == 0:
+                break
 
 
 if __name__ == "__main__":

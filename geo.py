@@ -1,7 +1,6 @@
 from numpy import *
 from scipy.linalg.basic import *
 from scipy.linalg.decomp import *
-import sys, pickle, scipy.stats, pylab
 
 def translate_matrix(t):
     """
@@ -43,3 +42,47 @@ def optimal_affine(p, q):
     qq = q - q_star
     M = (qq * pp.T) * inv(pp * pp.T)
     return translate_matrix(q_star) * homogenous_matrix(M) * translate_matrix(-p_star)
+
+def optimal_rigid(p, q):
+    p_star = p.mean(axis=1)
+    q_star = q.mean(axis=1)
+    pp = p - p_star
+    qq = q - q_star
+    U, s, V = svd(asmatrix(qq) * asmatrix(pp.T))
+    M = asmatrix(U) * asmatrix(V)
+    return translate_matrix(q_star) * homogenous_matrix(M) * translate_matrix(-p_star)
+
+def optimal_linear_transform_for_l(p, E, l):
+    d, v = p.shape
+    n = d * (d+1)/2
+    A = zeros((E.shape[0], n), 'd')
+
+    diff = asarray(p[:, E[:, 0]] - p[:, E[:, 1]]).T
+    i = 0
+    for r in xrange(d):
+        for c in xrange(r + 1):
+            if r == c:
+                A[:, i] = diff[:, r] * diff[:, r]
+            else:
+                A[:, i] = 2 * diff[:, r] * diff[:, c]
+            i = i + 1
+
+    # solve least square A x = l
+    x = lstsq(A, l)[0]
+
+    S = zeros((d, d))
+    i = 0
+    for r in xrange(d):
+        for c in xrange(r + 1):
+            if r == c:
+                S[r, c] = x[i]
+            else:
+                S[r, c] = S[c, r] = x[i]
+            i = i + 1
+
+    # find M s.t transpose(M) * M = S
+    u, s, v = svd(S)
+    return asmatrix(diag(sqrt(s), 0)) * asmatrix(v)
+    
+
+    
