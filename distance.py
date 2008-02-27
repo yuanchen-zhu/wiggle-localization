@@ -141,16 +141,46 @@ class NotLocallyRigid(Exception):
 class NotGloballyRigid(Exception):
     pass
 
-def graph_scale(g, kernel_ratio, noise_std, sampling_ratio):
-    #saveout = sys.stdout
-    #sys.stdout = open("log", "ab")
-    #locally_rigid_conf = open("locally-rigid", "ab")
-    #non_rigid_conf = open("none-rigid", "ab")
-    #globally_rigid_invalid_stress = open("globally-rigid-invalid-stress", "ab")
+def plot_info(name_param, cov_spec, t, stress_spec, d, p, approx_p, v, E):
+    margin = 0.05
+    width = (1.0 - margin * 4.0) / 3.0
+    height = 1.0 - margin * 2.0
 
+    figure(figsize=(12,4))
+    clf()
+
+    #Graph the spectral distribution of the covariance matrix
+    axes([margin, margin, width, height])
+    semilogy()
+    plot(xrange(len(cov_spec)),cov_spec)
+    axvline(t)
+    axis([0, 300, 0.001, 1000])
+    gca().set_aspect('auto')
+
+    #Graph the spectral distribution of the stress matrix
+    axes([margin*2+width, margin, width, height])
+    loglog()
+    plot(xrange(1, len(stress_spec)), stress_spec[1:])
+    axvline(d)
+    axis([1, v, 1e-8, 1e0])
+    gca().set_aspect('auto')
+
+    #Graph the geometry
+    axes([margin*3+width*2, margin, width, height])
+    scatter(x = approx_p[0].A.ravel(), y = approx_p[1].A.ravel(), s = 32, linewidth=(0.0), c = "r", marker = 'o', zorder=100)
+    scatter(x = p[0].A.ravel(), y = p[1].A.ravel(), s = 32, linewidth=(0.0), c = "b", marker = 'o', zorder =101)
+    axis([-0.2, 1.2, -0.2, 1.2])
+    gca().set_aspect('equal')
+
+    gca().add_collection(LineCollection([p.T[e] for e in E], colors = "lightgrey"))
+    gca().add_collection(LineCollection([(approx_p.T[i].A.ravel(), p.T[i].A.ravel()) for i in xrange(v)], colors = "green"))
+
+    savefig('infoplot-%s.png' % name_param)
+
+def graph_scale(g, kernel_ratio, noise_std, sampling_ratio):
     p, E = g
     v, d, e = v_d_e_from_graph(g)
-
+    
     # Sanity check: is the graph globally rigid
     t = locally_rigid_rank(v, d)
     if t >= e: raise DOFTooFew()
@@ -159,26 +189,24 @@ def graph_scale(g, kernel_ratio, noise_std, sampling_ratio):
     if rig == "N": raise NotLocallyRigid()
     elif rig == "L": raise NotGloballyRigid()
 
-
-    def noisy_L(p, E):
-        return L(p, E, noise_std = noise_std)
-
     # Now esimate the tangent plane
     N_samples = int(t * sampling_ratio)
     print_info("#samples = %d" % N_samples)
     
     #DL_of_deltas = asmatrix(zeros((e, N_samples), 'd'))
+
     #for i in range(N_samples):
     #    delta = (asmatrix(random.random((d,v))) - 0.5) * (kernel_ratio * 2)
     #    for j in range(n_measure):
     #        DL_of_deltas[:,i] += noisy_L(p + delta, E) - noisy_L(p, E)
     #    DL_of_deltas[:,i] /= n_measure
+
     DL_of_deltas = asmatrix(zeros((e, N_samples + 1), 'd'))
-    DL_of_deltas[:,0] = noisy_L(p, E)
+    DL_of_deltas[:,0] = L(p, E, noise_std)
     for i in xrange(N_samples):
         delta = asmatrix(random.random((d,v))) - 0.5
         delta *= (kernel_ratio*2)
-        DL_of_deltas[:,i+1] = noisy_L(p + delta, E)
+        DL_of_deltas[:,i+1] = L(p + delta, E, noise_std)
     
     #mean = DL_of_deltas.mean(axis=1)
     #for i in range(N_samples+1):
@@ -187,17 +215,6 @@ def graph_scale(g, kernel_ratio, noise_std, sampling_ratio):
     u, s, vh = svd(DL_of_deltas)
     T_of_p_basis = u[:,:t]
     S_of_p_basis = u[:,t:]
-
-    S_eigen_distr = s[t:] - s[t:].min()
-    S_eigen_distr /= S_eigen_distr.max()
-
-    # Graph the spectral distribution of the eigenvalues of the covariance matrix
-    clf()
-    semilogy()
-    plot(xrange(len(s)),s)
-    axvline(t)
-    axis([0, 600, 0.001, 1000]) 
-    savefig('cov-eigenvalue-noise-%.06f-ker-%.06f-sampling-%.04d.png' % (noise_std, kernel_ratio, sampling_ratio))
 
     # Try to find a good stress matrix (i.e., with a clear difference
     # between the d'th and d+1'th eigenvalue (0-based indexing)
@@ -225,13 +242,6 @@ def graph_scale(g, kernel_ratio, noise_std, sampling_ratio):
             break
         stress_tries = stress_tries + 1
 
-    # Graph the spectral distribution of the eigenvalues of the stress matrix
-    clf()
-    semilogy()
-    plot(xrange(len(abseig)-1), abseig[1:])
-    axvline(d-1)
-    axis([0, 50, 1e-8, 1e0]) 
-    savefig('stress-ev-noise-%.06f-ker-%.06f-sampling-%.04d.png' % (noise_std, kernel_ratio, sampling_ratio))
     
     print_info("eigval[d+1]/eigval[d] = %g" % maxratio)
 
@@ -240,32 +250,18 @@ def graph_scale(g, kernel_ratio, noise_std, sampling_ratio):
     approx_p = (A * homogenous_vectors(q))[:d,:]
     diff = p - approx_p 
 
-    clf()
-    scatter(x = approx_p[0].A.ravel(), y = approx_p[1].A.ravel(), s = 32, linewidth=(0.0), c = "r", marker = 'o', zorder=100)
-    scatter(x = p[0].A.ravel(), y = p[1].A.ravel(), s = 32, linewidth=(0.0), c = "b", marker = 'o', zorder =100)
 
-    axis([-0.2, 1.2, -0.2, 1.2])
-
-    gca().add_collection(LineCollection([p.T[e] for e in E], colors = "lightgrey"))
-    gca().add_collection(LineCollection([(approx_p.T[i].A.ravel(), p.T[i].A.ravel()) for i in xrange(v)], colors = "green"))
-
-    savefig('points-noise-%.06f-ker-%.06f-sampling-%.04d.png' % (noise_std, kernel_ratio, sampling_ratio))
-
+    # plot the info
+    plot_info(name_param = 'noise-%.06f-ker-%.06f-sampling-%.04d'
+              % (noise_std, kernel_ratio, sampling_ratio),
+              cov_spec = s, t = t,
+              stress_spec = abseig, d = d,
+              p = p, approx_p = approx_p, v = v, E = E)
 
     error = norm(diff)
     avg_error = math.sqrt(error * error / v)
-
     print_info("Average per-point error: %g\n" % avg_error)
-
     sys.stdout.flush()
-
-
-    #sys.stdout.close()
-    #locally_rigid_conf.close()
-    #non_rigid_conf.close()
-    #globally_rigid_invalid_stress.close()
-    #sys.stdout = saveout
-    
     return avg_error
 
 def graph_scale_directional(g, kernel_ratio, noise_std, sampling_ratio):
@@ -273,10 +269,10 @@ def graph_scale_directional(g, kernel_ratio, noise_std, sampling_ratio):
     v, d, e = v_d_e_from_graph(g)
 
 def main():
-    figure(figsize=(8,8))
+    random.seed(0)
     v = 50
     d = 2
-    ratio = 0.25
+    ratio = 0.2
     n_tests = 1
     
 
