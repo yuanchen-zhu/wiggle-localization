@@ -24,8 +24,9 @@ def build_edgeset(p, max_dist, min_dist):
         return v >= l0 and v <= l1
 
     V = xrange(p.shape[1])
-    return array([[i,j] for i in V for j in V 
-                  if i < j and inbetween(norm(p[:,i] - p[:,j]), min_dist, max_dist)], 'i')
+    return array(
+        [[i,j] for i in V for j in V if i < j and
+         inbetween(norm(p[:,i] - p[:,j]), min_dist, max_dist)], 'i')
 
 def L(p, E, noise_std):
     """
@@ -45,18 +46,27 @@ def locally_rigid_rank(v, d):
 def random_p(v, d):
     return asmatrix(array(random.random((d,v)), order='FORTRAN'))
 
-def random_graph(v, d, dist_ratio, min_dist, discardNonrigid = True):
+class DOFTooFew(Exception):
+    pass
+
+class NotLocallyRigid(Exception):
+    pass
+
+class NotGloballyRigid(Exception):
+    pass
+
+
+def random_graph(v, d, max_dist, min_dist, discardNonrigid = True):
     i = 0
-    while True:
+    while 1:
         p = random_p(v, d)
-        E = build_edgeset(p, dist_ratio * math.sqrt(d), min_dist)
+        E = build_edgeset(p, max_dist, min_dist)
         e = len(E)
         i = i + 1
         if discardNonrigid:
             t = locally_rigid_rank(v, d)
             if t >= e:
-                print "Too few degress of freedom. Enlarge edge set!"
-                return
+                raise DOFTooFew()
             rig =  rigidity(v, d, E)
             if rig != "G":
                 continue
@@ -97,7 +107,8 @@ def rigidity(v, d, E, eps = EPS, rigidity_iter = 2, stress_iter = 2):
             omega = stress_matrix_from_vector(w, E, v)
             eigval, eigvec = eig(omega)
             abs_eigval = abs(eigval)
-            stress_kernel_dim = min(stress_kernel_dim, len(abs_eigval[abs_eigval <= eps]))
+            stress_kernel_dim = min(stress_kernel_dim,
+                                    len(abs_eigval[abs_eigval <= eps]))
 
         if rigidity_rank == t and stress_kernel_dim == d + 1:
             break
@@ -133,19 +144,10 @@ def dump_graph(file, g):
     conf.p = p
     pickle.dump(conf, file)
 
-class DOFTooFew(Exception):
-    pass
-
-class NotLocallyRigid(Exception):
-    pass
-
-class NotGloballyRigid(Exception):
-    pass
-
-
 figure(figsize=(12,8))
 
-def plot_info(stats, cov_spec, t, stress_spec, d, p, approx_p, approx_p2, v, E):
+def plot_info(stats, cov_spec, t, stress_spec, d,
+              p, approx_p, approx_p2, v, E):
     margin = 0.05
     width = 1.0/3.0
     height = (1.0-margin*2)/2.0
@@ -153,19 +155,24 @@ def plot_info(stats, cov_spec, t, stress_spec, d, p, approx_p, approx_p2, v, E):
     clf()
 
     axes([0,0,1,1-margin*2], frameon=False)
-    title('Noise:%.04f   Kern.:%.04f   Sampling:%2.02f' % (stats["noise"], stats["kernel"], stats["sampling"]))
+    title('Noise:%.04f   Kern.:%.04f   Sampling:%2.02f'
+          % (stats["noise"], stats["kernel"], stats["sampling"]))
     figtext(width*2-margin, height*2-margin*1.5,
-            'aff. err: %.06f\naff. L-error: %.06f' % (stats["af g error"], stats["af l error"]), ha = "right", va = "top", color = "green")
+            'aff. err: %.06f\naff. L-err: %.06f'
+            % (stats["af g error"], stats["af l error"]),
+            ha = "right", va = "top", color = "green")
     figtext(width*3-margin*2, height*2-margin*1.5,
-            'err: %.06f\nL-error: %.06f' % (stats["l g error"], stats["l l error"]), ha = "right", va = "top", color = "red")
-
+            'err: %.06f\nL-err: %.06f' %
+            (stats["l g error"], stats["l l error"]),
+            ha = "right", va = "top", color = "red")
+    
     
     #Graph the spectral distribution of the covariance matrix
     axes([margin, margin, width-margin*2, height-margin*2])
-    semilogy()
-    plot(xrange(len(cov_spec)),cov_spec)
-    axvline(t)
-    axis([0, 300, 1e-4, 1e1])
+    loglog()
+    plot(xrange(1, 1+len(cov_spec)),cov_spec)
+    axvline(t+1)
+    axis([1, min(t*16, len(E))+1, 1e-4, 1e1])
     gca().set_aspect('auto')
     title("Cov. Spec.")
 
@@ -182,17 +189,26 @@ def plot_info(stats, cov_spec, t, stress_spec, d, p, approx_p, approx_p2, v, E):
     #Graph the geometry
     axes([margin+width, margin, width*2-margin*2, height*2-margin*2])
     title("Error")
-    scatter(x = approx_p2[0].A.ravel(), y = approx_p2[1].A.ravel(), s = 32, linewidth=(0.0), c = "green", marker = 'o', zorder=99, alpha=0.75)
-    scatter(x = approx_p[0].A.ravel(), y = approx_p[1].A.ravel(), s = 32, linewidth=(0.0), c = "r", marker = 'o', zorder=100, alpha=0.75)
-    scatter(x = p[0].A.ravel(), y = p[1].A.ravel(), s = 32, linewidth=(0.0), c = "b", marker = 'o', zorder =102, alpha=1)
+    scatter(x = approx_p2[0].A.ravel(), y = approx_p2[1].A.ravel(), s = 32,
+            linewidth=(0.0), c = "green", marker = 'o', zorder=99, alpha=0.75)
+    scatter(x = approx_p[0].A.ravel(), y = approx_p[1].A.ravel(), s = 32,
+            linewidth=(0.0), c = "r", marker = 'o', zorder=100, alpha=0.75)
+    scatter(x = p[0].A.ravel(), y = p[1].A.ravel(), s = 32,
+            linewidth=(0.0), c = "b", marker = 'o', zorder =102, alpha=1)
     axis([-0.2, 1.2, -0.2, 1.2])
     gca().set_aspect('equal')
 
-    gca().add_collection(LineCollection([p.T[e] for e in E], colors = "lightgrey", alpha=0.75))
-    gca().add_collection(LineCollection([(approx_p2.T[i].A.ravel(), p.T[i].A.ravel()) for i in xrange(v)], colors = "green", alpha=0.75))
-    gca().add_collection(LineCollection([(approx_p.T[i].A.ravel(), p.T[i].A.ravel()) for i in xrange(v)], colors = "red", alpha=0.75))
+    gca().add_collection(LineCollection([
+        p.T[e] for e in E], colors = "lightgrey", alpha=0.75))
+    gca().add_collection(LineCollection([
+        (approx_p2.T[i].A.ravel(), p.T[i].A.ravel())
+        for i in xrange(v)], colors = "green", alpha=0.75))
+    gca().add_collection(LineCollection([
+        (approx_p.T[i].A.ravel(), p.T[i].A.ravel())
+        for i in xrange(v)], colors = "red", alpha=0.75))
 
-    fn = 'infoplot-n%.04f-k%.04f-s%2.02f.png' % (stats["noise"], stats["kernel"], stats["sampling"])
+    fn = 'infoplot-n%.04f-k%.04f-s%2.02f.png' % (
+        stats["noise"], stats["kernel"], stats["sampling"])
     savefig(fn)
 
 
@@ -237,7 +253,8 @@ def graph_scale(g, kernel, noise_std, sampling):
 
     # Find stress matrix kernel
     ssd = S_of_p_basis.shape[1]         # stress space dimension
-    stress_kernel = zeros((v, ssd * d))
+    n_per_matrix = d                    # number of basis vectors to pick from stress kernel
+    stress_kernel = zeros((v, ssd * n_per_matrix))
 
     print_info("stress space dim = %d" % ssd)
     for i in xrange(ssd):
@@ -248,7 +265,7 @@ def graph_scale(g, kernel, noise_std, sampling):
     
         order =  range(v)
         order.sort(key = lambda i: eigval[i])
-        stress_kernel[:,i*d : i*d+d] = eigvec[:,order[1:d+1]]
+        stress_kernel[:, i*n_per_matrix : (i+1)*n_per_matrix] = eigvec[:,order[1:n_per_matrix+1]]
 
     stress_kernel_basis, ev, whatever = svd(stress_kernel)
 
@@ -276,45 +293,36 @@ def graph_scale(g, kernel, noise_std, sampling):
     l_l_error = avg_error(norm(l- L(l_approx, E, 0)), e)
     
     # plot the info
-
-    stats = {"noise":noise_std,
-             "kernel":kernel,
-             "sampling":sampling,
-             "l g error": l_g_error,
-             "l l error": l_l_error,
-             "af g error": af_g_error,
-             "af l error": af_l_error}
-    
-    plot_info(stats,
+    plot_info({"noise":noise_std,
+               "kernel":kernel,
+               "sampling":sampling,
+               "l g error": l_g_error,
+               "l l error": l_l_error,
+               "af g error": af_g_error,
+               "af l error": af_l_error},
               cov_spec = s, t = t,
               stress_spec = ev, d = d,
               p = p, approx_p = l_approx, approx_p2 = af_approx, v = v, E = E)
 
-    sys.stdout.flush()
     return af_g_error
 
-def graph_scale_directional(g, kernel, noise_std, sampling):
-    p, E = g
-    v, d, e = v_d_e_from_graph(g)
-
 def main():
-    random.seed(0)
-    v = 50
+    random.seed(100)
+    v = 100
     d = 2
-    ratio = 0.2
+    dist_threshold = 0.28
     n_tests = 1
     
+    print "#V = %d  D = %d  max_dist = %g  n_tests = %d " % (
+        v, d, dist_threshold, n_tests)
 
-    print "#V = %d  D = %d  dist_ratio = %g  n_tests = %d " % (v, d, ratio, n_tests)
-    print "%12s; %12s; %12s; %12s; %12s" % ("perturb", "noise dev", "samp. ratio", "err. mean", "err. dev") 
-
-    g = random_graph(v, d, ratio, 0.01)
-    for noise_std in [0, 0.001, 0.002, 0.004]:
-        for kern_ratio in [4, 6, 9, 14, 21]:
+    g = random_graph(v, d, dist_threshold, 0.01)
+    for noise_std in array([0, 0.005, 0.01, 0.02]) * dist_threshold:
+        for kern in array([4, 8, 16]) * noise_std:
             for sampling in [1, 1.5, 2, 4, 8]:
                 e = graph_scale(g = g, 
-                                kernel=max(1e-4, noise_std * kern_ratio),
-                                noise_std = noise_std, 
+                                kernel=max(1e-4, kern),
+                                noise_std = noise_std,
                                 sampling = sampling)
                 sys.stdout.flush()
             if noise_std == 0:
