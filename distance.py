@@ -154,7 +154,7 @@ def plot_info(stats, cov_spec, t, stress_spec, d,
 
     clf()
 
-    axes([0,0,1,1-margin*2], frameon=False)
+    axes([0,0,1,1-margin*2], frameon=False, xticks=[], yticks=[])
     title('Noise:%.04f   Kern.:%.04f   Sampling:%2.02f'
           % (stats["noise"], stats["kernel"], stats["sampling"]))
     figtext(width*2-margin, height*2-margin*1.5,
@@ -248,12 +248,12 @@ def graph_scale(g, kernel, noise_std, sampling):
     #    DL_of_deltas[:,i] -= mean
 
     u, s, vh = svd(DL_of_deltas)
-    T_of_p_basis = u[:,:t]
-    S_of_p_basis = u[:,t:]
+    T_of_p_basis = u[:,:min(t, N_samples)]
+    S_of_p_basis = u[:,min(t, N_samples):]
 
     # Find stress matrix kernel
     ssd = S_of_p_basis.shape[1]         # stress space dimension
-    n_per_matrix = d                    # number of basis vectors to pick from stress kernel
+    n_per_matrix = d*4                  # number of basis vectors to pick from stress kernel
     stress_kernel = zeros((v, ssd * n_per_matrix))
 
     print_info("stress space dim = %d" % ssd)
@@ -307,10 +307,10 @@ def graph_scale(g, kernel, noise_std, sampling):
     return af_g_error
 
 def main():
-    random.seed(100)
-    v = 100
+    random.seed(0)
+    v = 50
     d = 2
-    dist_threshold = 0.28
+    dist_threshold = 0.3
     n_tests = 1
     
     print "#V = %d  D = %d  max_dist = %g  n_tests = %d " % (
@@ -318,7 +318,7 @@ def main():
 
     g = random_graph(v, d, dist_threshold, 0.01)
     for noise_std in array([0, 0.005, 0.01, 0.02]) * dist_threshold:
-        for kern in array([4, 8, 16]) * noise_std:
+        for kern in array([5, 10, 15]) * noise_std:
             for sampling in [1, 1.5, 2, 4, 8]:
                 e = graph_scale(g = g, 
                                 kernel=max(1e-4, kern),
