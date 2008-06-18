@@ -156,7 +156,7 @@ def plot_info(stats, cov_spec, t, stress_spec, d,
 
     axes([0,0,1,1-margin*2], frameon=False, xticks=[], yticks=[])
     title('Noise:%.04f   Kern.:%.04f   Sampling:%2.02f'
-          % (stats["noise"], stats["kernel"], stats["sampling"]))
+          % (stats["noise"], stats["perturb"], stats["sampling"]))
     figtext(width*2-margin, height*2-margin*1.5,
             'aff. err: %.06f\naff. L-err: %.06f'
             % (stats["af g error"], stats["af l error"]),
@@ -208,120 +208,163 @@ def plot_info(stats, cov_spec, t, stress_spec, d,
         for i in xrange(v)], colors = "red", alpha=0.75))
 
     fn = 'infoplot-n%.04f-k%.04f-s%2.02f.png' % (
-        stats["noise"], stats["kernel"], stats["sampling"])
+        stats["noise"], stats["perturb"], stats["sampling"])
+    print_info("%s dumped" % fn)
     savefig(fn)
 
-
-def graph_scale(g, kernel, noise_std, sampling):
+def check_ggr(g):
     p, E = g
     v, d, e = v_d_e_from_graph(g)
     
-    # Sanity check: is the graph globally rigid
-    t = locally_rigid_rank(v, d)
-    if t >= e: raise DOFTooFew()
+    # Sanity check: is the graph generic globally rigid
+    dim_T = locally_rigid_rank(v, d)
+    if dim_T >= e:
+        raise DOFTooFew()
+    else:
+        rig =  rigidity(v, d, E)
+        if rig == "N": raise NotLocallyRigid()
+        elif rig == "L": raise NotGloballyRigid()
 
-    rig =  rigidity(v, d, E)
-    if rig == "N": raise NotLocallyRigid()
-    elif rig == "L": raise NotGloballyRigid()
+def measure_L_rho(g, perturb, noise_std, n_samples):
+    p, E = g
+    v, d, e = v_d_e_from_graph(g)
 
-    # Now esimate the tangent plane
-    N_samples = int(t * sampling)
-    print_info("#samples = %d" % N_samples)
-    
-    #DL_of_deltas = asmatrix(zeros((e, N_samples), 'd'))
+    print_info("#measurements = %d" % n_samples)
+
+    #L_rhos = asmatrix(zeros((e, n_samples), 'd'))
 
     #for i in range(N_samples):
-    #    delta = (asmatrix(random.random((d,v))) - 0.5) * (kernel * 2)
+    #    delta = (asmatrix(random.random((d,v))) - 0.5) * (perturb * 2)
     #    for j in range(n_measure):
-    #        DL_of_deltas[:,i] += noisy_L(p + delta, E) - noisy_L(p, E)
-    #    DL_of_deltas[:,i] /= n_measure
+    #        L_rhos[:,i] += noisy_L(p + delta, E) - noisy_L(p, E)
+    #    L_rhos[:,i] /= n_measure
 
-    DL_of_deltas = asmatrix(zeros((e, N_samples + 1), 'd'))
-    DL_of_deltas[:,0] = L(p, E, noise_std)
-    for i in xrange(N_samples):
+    L_rhos = asmatrix(zeros((e, n_samples), 'd'))
+    for i in xrange(n_samples):
         delta = asmatrix(random.random((d,v))) - 0.5
-        delta *= (kernel*2)
-        DL_of_deltas[:,i+1] = L(p + delta, E, noise_std)
+        delta *= (perturb*2)
+        L_rhos[:,i] = L(p + delta, E, noise_std)
+
+    #mean = L_rhos.mean(axis=1)
+    #for i in range(n_samples+1):
+    #    L_rhos[:,i] -= mean
+
+    return L_rhos, L(p, E, noise_std)
+
+def estimate_stress_space(L_rhos, dim_T):
+    u, s, vh = svd(L_rhos)
+    S_basis = asmatrix(u[:,dim_T:])
+    return S_basis, s
+
+def estimate_stress_space2(L_rhos, dim_T):
+    pass
+
+def estimate_stress_kernel(g, S_basis):
+    p, E = g
+    v, d, e = v_d_e_from_graph(g)
     
-    #mean = DL_of_deltas.mean(axis=1)
-    #for i in range(N_samples+1):
-    #    DL_of_deltas[:,i] -= mean
+    n_S = S_basis.shape[1]
 
-    u, s, vh = svd(DL_of_deltas)
-    T_of_p_basis = u[:,:min(t, N_samples)]
-    S_of_p_basis = u[:,min(t, N_samples):]
+    ss_samples = min(n_S, 300)
 
-    # Find stress matrix kernel
-    ssd = S_of_p_basis.shape[1]         # stress space dimension
-    n_per_matrix = d*4                  # number of basis vectors to pick from stress kernel
-    stress_kernel = zeros((v, ssd * n_per_matrix))
+    # If you want randomize:
+    stress_space = svd(asmatrix(S_basis) *
+                       asmatrix(random.random((n_S, ss_samples+ss_samples/2))))[0][:,:ss_samples]
+    # Else take the last ss_samples stress vectors in S_basis
+    #stress_space = S_basis[n_S-ss_samples:]
 
-    print_info("stress space dim = %d" % ssd)
-    for i in xrange(ssd):
-        w = S_of_p_basis[:, i]
+    n_per_matrix = d*4 # number of basis vectors to pick from kernel of each matrix
+    stress_kernel = zeros((v, ss_samples * n_per_matrix))
+
+    stress_mul = ones(ss_samples)
+    # for i in xrange(stress_space.shape[1]):
+    #    j = t + i
+    #    if j >= len(s):
+    #        j = len(s) - 1
+    #    stress_mul[i] = -math.log(s[j])
+
+    print_info("stress space samples = %d" % ss_samples)
+    for i in xrange(ss_samples):
+        w = stress_space[:, i]
         omega = stress_matrix_from_vector(w, E, v)
         eigval, eigvec = eig(omega)
         eigval = abs(eigval)
     
         order =  range(v)
         order.sort(key = lambda i: eigval[i])
-        stress_kernel[:, i*n_per_matrix : (i+1)*n_per_matrix] = eigvec[:,order[1:n_per_matrix+1]]
+        stress_kernel[:, i*n_per_matrix : (i+1)*n_per_matrix] = eigvec[:,order[1:n_per_matrix+1]] * stress_mul[i]
 
     stress_kernel_basis, ev, whatever = svd(stress_kernel)
+    return stress_kernel_basis[:, :d], ev
 
-    # basic vector
-    q = asmatrix(stress_kernel_basis.T[:d, :])
+def calculate_relative_positions(g, L_rho, q):
+    B = optimal_linear_transform_for_l(q, g[1], L_rho)
+    return B * q
 
-    # best affine approximation
-    A = optimal_affine(q, p)
-    af_approx = (A * homogenous_vectors(q))[:d,:]
+def graph_scale(g, perturb, noise_std, sampling):
+    p, E = g
+    v, d, e = v_d_e_from_graph(g)
 
-    # best l approximation
-    B = optimal_linear_transform_for_l(q, E, DL_of_deltas[:,0])
-    q = B * q
-    A = optimal_rigid(q, p)
-    l_approx = (A * homogenous_vectors(q))[:d,:]
+    check_ggr(g)
+
+    dim_T = locally_rigid_rank(v, d)
+    n_samples = int(dim_T * sampling)
+
+    L_rhos, L_rho = measure_L_rho(g, perturb, noise_std, n_samples)
+    S_basis, cov_spec = estimate_stress_space(L_rhos, dim_T)
+    K_basis, stress_spec = estimate_stress_kernel(g, S_basis)
+    
+    q = asmatrix(K_basis.T) # coordinate vector
+
+    T_q = calculate_relative_positions(g, L_rho, q)
+
+    l_approx = (optimal_rigid(T_q, p) * homogenous_vectors(T_q))[:d,:]
+    af_approx = (optimal_affine(q, p) * homogenous_vectors(q))[:d,:]
+
 
     l = L(p, E, 0)
-    def avg_error(e, n):
-        return math.sqrt(e * e / n)
-    
-    af_g_error = avg_error(norm(p - af_approx), v)
-    af_l_error = avg_error(norm(l - L(af_approx, E, 0)), e)
 
-    l_g_error = avg_error(norm(p - l_approx), v)
-    l_l_error = avg_error(norm(l- L(l_approx, E, 0)), e)
+    def mean_l2_error(v1, v2):
+        d, n = v1.shape
+        return mean(array([norm(v1[:,i] - v2[:,i]) for i in xrange(n)]))
+    
+    af_g_error = mean_l2_error(p, af_approx)
+    af_l_error = mean_l2_error(l.T, L(af_approx, E, 0).T)
+
+    l_g_error = mean_l2_error(p, l_approx)
+    l_l_error = mean_l2_error(l.T, L(l_approx, E, 0).T)
     
     # plot the info
     plot_info({"noise":noise_std,
-               "kernel":kernel,
+               "perturb":perturb,
                "sampling":sampling,
                "l g error": l_g_error,
                "l l error": l_l_error,
                "af g error": af_g_error,
                "af l error": af_l_error},
-              cov_spec = s, t = t,
-              stress_spec = ev, d = d,
+              cov_spec = cov_spec, t = dim_T,
+              stress_spec = stress_spec, d = d,
               p = p, approx_p = l_approx, approx_p2 = af_approx, v = v, E = E)
 
     return af_g_error
 
 def main():
     random.seed(0)
-    v = 50
+    v = 200
     d = 2
-    dist_threshold = 0.3
+    k =  math.pow(2*(d+1), 1.0/d)/3.0
+    dist_threshold = 3*k*math.pow(v, -1.0/d)
     n_tests = 1
     
     print "#V = %d  D = %d  max_dist = %g  n_tests = %d " % (
         v, d, dist_threshold, n_tests)
 
     g = random_graph(v, d, dist_threshold, 0.01)
-    for noise_std in array([0, 0.005, 0.01, 0.02]) * dist_threshold:
-        for kern in array([5, 10, 15]) * noise_std:
-            for sampling in [1, 1.5, 2, 4, 8]:
+    for noise_std in array([0.01, 0.02]) * dist_threshold:
+        for perturb in array([5, 10]) * noise_std:
+            for sampling in [1.5, 2, 4, 8]:
                 e = graph_scale(g = g, 
-                                kernel=max(1e-4, kern),
+                                perturb=max(1e-4, perturb),
                                 noise_std = noise_std,
                                 sampling = sampling)
                 sys.stdout.flush()
