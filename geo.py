@@ -53,6 +53,13 @@ def optimal_rigid(p, q):
     return translate_matrix(q_star) * homogenous_matrix(M) * translate_matrix(-p_star)
 
 def optimal_linear_transform_for_l(p, E, l):
+    """
+    E is an edge set (set of pairs) and l assigns a real number to
+    each edge in E. This function finds the optimal linear
+    transformation M such that the sum over {i,j} in E of the squared
+    difference between l({i,j}) and the squared length of the
+    difference between the i-th and j-th column of Mp"""
+    
     d, v = p.shape
     n = d * (d+1)/2
     A = zeros((E.shape[0], n), 'd')
