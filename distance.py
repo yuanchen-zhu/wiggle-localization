@@ -231,23 +231,11 @@ def measure_L_rho(g, perturb, noise_std, n_samples):
 
     print_info("#measurements = %d" % n_samples)
 
-    #L_rhos = asmatrix(zeros((e, n_samples), 'd'))
-
-    #for i in range(N_samples):
-    #    delta = (asmatrix(random.random((d,v))) - 0.5) * (perturb * 2)
-    #    for j in range(n_measure):
-    #        L_rhos[:,i] += noisy_L(p + delta, E) - noisy_L(p, E)
-    #    L_rhos[:,i] /= n_measure
-
     L_rhos = asmatrix(zeros((e, n_samples), 'd'))
     for i in xrange(n_samples):
         delta = asmatrix(random.random((d,v))) - 0.5
         delta *= (perturb*2)
         L_rhos[:,i] = L(p + delta, E, noise_std)
-
-    #mean = L_rhos.mean(axis=1)
-    #for i in range(n_samples+1):
-    #    L_rhos[:,i] -= mean
 
     return L_rhos, L(p, E, noise_std)
 
