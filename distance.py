@@ -7,26 +7,13 @@ from pylab import *
 from matplotlib.collections import LineCollection
 from geo import *
 from util import *
+from graph import *
 
 EPS = 1e-12
 
 def print_info(s):
     sys.stderr.write("INFO:%s\n" % s)
     sys.stderr.flush()
-
-def build_edgeset(p, max_dist, min_dist):
-    """
-    Given a d x n numpyarray p encoding n d-dim points, returns a k x
-    2 integer numpyarray encoding k edges whose two ends are distanced
-    less than max_dist apart.
-    """
-    def inbetween (v, l0, l1):
-        return v >= l0 and v <= l1
-
-    V = xrange(p.shape[1])
-    return array(
-        [[i,j] for i in V for j in V if i < j and
-         inbetween(norm(p[:,i] - p[:,j]), min_dist, max_dist)], 'i')
 
 def L(p, E, noise_std):
     """
@@ -56,11 +43,11 @@ class NotGloballyRigid(Exception):
     pass
 
 
-def random_graph(v, d, max_dist, min_dist, discardNonrigid = True):
+def random_graph(v, d, max_dist, min_dist, discardNonrigid = True, max_neighbors = 12):
     i = 0
     while 1:
         p = random_p(v, d)
-        E = build_edgeset(p, max_dist, min_dist)
+        E = build_edgeset(p, max_dist, min_dist, max_neighbors)
         e = len(E)
         i = i + 1
         if discardNonrigid:
@@ -76,9 +63,6 @@ def random_graph(v, d, max_dist, min_dist, discardNonrigid = True):
         print_info("|V|=%d |E|=%d" % (v, e))
         return p, E
 
-def v_d_e_from_graph(g):
-    p, E = g
-    return p.shape[1], p.shape[0], len(E)
 
 def rigidity(v, d, E, eps = EPS, rigidity_iter = 2, stress_iter = 2):
     t = locally_rigid_rank(v, d)
@@ -94,7 +78,7 @@ def rigidity(v, d, E, eps = EPS, rigidity_iter = 2, stress_iter = 2):
             diff_ij = p[:,i] - p[:,j]
             D[k, i*d:i*d+d] = 2.0 * diff_ij.T
             D[k, j*d:j*d+d] = -2.0 * diff_ij.T
-        u, s, vh = svd(D)
+        u, s, vh = svd(D)               # E by dv, sparse, 2dE non-zero
         rigidity_rank = max(rigidity_rank, len(s[s >= eps]))
 
         if rigidity_rank != t:
@@ -105,7 +89,7 @@ def rigidity(v, d, E, eps = EPS, rigidity_iter = 2, stress_iter = 2):
             w = stress_basis * asmatrix(random.random((e - t, 1)))
             w /= norm(w)
             omega = stress_matrix_from_vector(w, E, v)
-            eigval, eigvec = eig(omega)
+            eigval, eigvec = eig(omega) # sparse
             abs_eigval = abs(eigval)
             stress_kernel_dim = min(stress_kernel_dim,
                                     len(abs_eigval[abs_eigval <= eps]))
@@ -129,20 +113,6 @@ def stress_matrix_from_vector(w, E, v):
         O[p,p] -= w[i]
         O[q,q] -= w[i]
     return O
-
-class Conf:
-    pass
-
-def dump_graph(file, g):
-    p, E = g
-    v, d, e = v_d_e_from_graph(g)
-
-    conf = Conf()
-    conf.v = v
-    conf.d = d
-    conf.E = E
-    conf.p = p
-    pickle.dump(conf, file)
 
 figure(figsize=(12,8))
 
@@ -240,13 +210,108 @@ def measure_L_rho(g, perturb, noise_std, n_samples):
     return L_rhos, L(p, E, noise_std)
 
 def estimate_stress_space(L_rhos, dim_T):
-    u, s, vh = svd(L_rhos)
+    u, s, vh = svd(L_rhos)              # dense
     S_basis = asmatrix(u[:,dim_T:])
     return S_basis, s
 
-def estimate_stress_space2(L_rhos, dim_T):
-    pass
+def affected_vertices(E, edge_idx):
+    return set(E[edge_idx,:].ravel())
 
+def estimate_sub_stress_space(L_rhos, dim_T, g, edge_idx, vtx_idx = None):
+    """
+    edge_idx is a 1-d array of edge indices. Only the indexed edges
+    have the correponding components of the stress space calculated.
+    """
+    u, s, vh = svd(L_rhos[edge_idx, :]) # dense
+
+    if vtx_idx != None:
+        v = len(vtx_idx)
+    else:
+        v = len(affected_vertices(g[1], edge_idx))
+    d = v_d_e_from_graph(g)[1]
+
+    # sanity check for subgraph
+    sub_dim_T = locally_rigid_rank(v, d)
+    if sub_dim_T >= len(edge_idx) or sub_dim_T >= L_rhos.shape[1]:
+        return zeros((len(edge_idx), 0)), zeros((0))
+
+    # Now find the actual dimension of the tangent space, it should be
+    # in the range of [locally_rigid_rank(v, d), v * d]
+    prev_derivative = 1                   # derivative should always < 0
+    for t in xrange(sub_dim_T, min(len(edge_idx), L_rhos.shape[1], v * d)):
+        derivative = math.log(s[t] / s[t-1]) / math.log(float(t)/float(t-1))
+        if derivative > prev_derivative:
+            break
+        prev_derivative = derivative
+
+    print t-1, sub_dim_T
+
+    sub_S_basis = asmatrix(u[:,t-1:])
+    return sub_S_basis, s
+
+def get_k_ring_subgraphs(g, k):
+    """
+    return k_rings of each vertex. Result is stored as two list, one
+    vtx indices, one edge indices.
+    """
+    adj = adjacency_list_from_edge_list(g)
+    E = g[1]
+    v, d, e = v_d_e_from_graph(g)
+    vtx_indices = [set([]) for i in xrange(v)]
+    edge_indices = [set([]) for i in xrange(v)]
+    for i in xrange(v):
+        # do a length limited BFS:
+        a = [(i, 0)]
+        p = 0
+        vtx_indices[i].add(i)
+        while p != len(a):
+            w, l = a[p]
+            p = p + 1
+            if l < k:
+                for edge, dest in adj[w]:
+                    if not (dest in vtx_indices[i]):
+                        a.append((dest, l+1))
+                        vtx_indices[i].add(dest)
+                        
+        for w in vtx_indices[i]:
+            for edge, dest in adj[w]:
+                if dest in vtx_indices[i]:
+                    edge_indices[i].add(edge)
+
+        print "%d-ring for vtx %d: nv = %d, ne = %d" % (k, i, len(vtx_indices[i]), len(edge_indices[i]))
+        
+        vtx_indices[i] = array(list(vtx_indices[i]), 'i')
+        edge_indices[i] = array(list(edge_indices[i]), 'i')
+
+    return vtx_indices, edge_indices
+
+
+def estimate_stress_space_from_k_ring_subgraphs(L_rhos, dim_T, g, k):
+    v, d, e = v_d_e_from_graph(g)
+    vtx_indices, edge_indices = get_k_ring_subgraphs(g, k)
+    sub_S_basis = []
+    n = 0
+    for i in xrange(v):
+        sub_S_basis.append(estimate_sub_stress_space(L_rhos, dim_T, g, edge_indices[i], vtx_indices[i])[0])
+        n = n + sub_S_basis[i].shape[1]
+
+    # Now unpack the various sub_S_basis into one big matrix
+    m = zeros((e, n))
+    j = 0;
+    for i in xrange(v):
+        j2 = j + sub_S_basis[i].shape[1]
+        m[edge_indices[i], j:j2] = sub_S_basis[i]
+        j = j2
+
+    # finally return qr decomp on the big matrix
+    print m.shape
+    #q, r = qr(m, overwrite_a = 1, mode = 'qr')
+    #return q[:, :e-dim_T], ones((e))
+
+    
+    u, s, vh = svd(m) # e by Cv, sparse, C^2 v non zero entries, C around 50
+    return u[:, :e-dim_T], s
+    
 def estimate_stress_kernel(g, S_basis):
     p, E = g
     v, d, e = v_d_e_from_graph(g)
@@ -257,7 +322,7 @@ def estimate_stress_kernel(g, S_basis):
 
     # If you want randomize:
     stress_space = svd(asmatrix(S_basis) *
-                       asmatrix(random.random((n_S, ss_samples+ss_samples/2))))[0][:,:ss_samples]
+                       asmatrix(random.random((n_S, ss_samples+ss_samples/2))))[0][:,:ss_samples] # dense
     # Else take the last ss_samples stress vectors in S_basis
     #stress_space = S_basis[n_S-ss_samples:]
 
@@ -275,14 +340,14 @@ def estimate_stress_kernel(g, S_basis):
     for i in xrange(ss_samples):
         w = stress_space[:, i]
         omega = stress_matrix_from_vector(w, E, v)
-        eigval, eigvec = eig(omega)
+        eigval, eigvec = eig(omega)     # sparse
         eigval = abs(eigval)
     
         order =  range(v)
         order.sort(key = lambda i: eigval[i])
         stress_kernel[:, i*n_per_matrix : (i+1)*n_per_matrix] = eigvec[:,order[1:n_per_matrix+1]] * stress_mul[i]
 
-    stress_kernel_basis, ev, whatever = svd(stress_kernel)
+    stress_kernel_basis, ev, whatever = svd(stress_kernel) # dense
     return stress_kernel_basis[:, :d], ev
 
 def calculate_relative_positions(g, L_rho, q):
@@ -299,7 +364,10 @@ def graph_scale(g, perturb, noise_std, sampling):
     n_samples = int(dim_T * sampling)
 
     L_rhos, L_rho = measure_L_rho(g, perturb, noise_std, n_samples)
-    S_basis, cov_spec = estimate_stress_space(L_rhos, dim_T)
+    #S_basis, cov_spec = estimate_stress_space(L_rhos, dim_T)
+    #S_basis, cov_spec = estimate_sub_stress_space(L_rhos, dim_T, g, range(len(E)))
+    S_basis, cov_spec = estimate_stress_space_from_k_ring_subgraphs(L_rhos, dim_T, g, 2)
+
     K_basis, stress_spec = estimate_stress_kernel(g, S_basis)
     
     q = asmatrix(K_basis.T) # coordinate vector
@@ -338,26 +406,33 @@ def graph_scale(g, perturb, noise_std, sampling):
 
 def main():
     random.seed(0)
-    v = 200
+    v = 100
     d = 2
     k =  math.pow(2*(d+1), 1.0/d)/3.0
-    dist_threshold = 3*k*math.pow(v, -1.0/d)
+    dist_threshold = 4*k*math.pow(v, -1.0/d)
     n_tests = 1
     
     print "#V = %d  D = %d  max_dist = %g  n_tests = %d " % (
         v, d, dist_threshold, n_tests)
 
-    g = random_graph(v, d, dist_threshold, 0.01)
-    for noise_std in array([0.01, 0.02]) * dist_threshold:
-        for perturb in array([5, 10]) * noise_std:
-            for sampling in [1.5, 2, 4, 8]:
+    g = random_graph(v, d, dist_threshold, 0.01, discardNonrigid = True, max_neighbors = 10)
+
+    ## noise_stds = array([0.01, 0.02])
+    ## perturbs = array([5, 10])
+    ## samplings = array([1.5, 2, 4, 8])
+
+    noise_stds = array([0.01])
+    perturbs = array([10])
+    samplings = array([0.6])
+    
+    for noise_std in  noise_stds * dist_threshold:
+        for perturb in perturbs * noise_std:
+            for sampling in samplings:
                 e = graph_scale(g = g, 
                                 perturb=max(1e-4, perturb),
                                 noise_std = noise_std,
                                 sampling = sampling)
                 sys.stdout.flush()
-            if noise_std == 0:
-                break
 
 
 if __name__ == "__main__":
