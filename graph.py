@@ -1,6 +1,6 @@
 from numpy import *
 from scipy.linalg.basic import *
-import sys
+from util import *
 
 class Graph:
     pass
@@ -16,6 +16,8 @@ def adjacency_list_from_edge_list(g):
     for i in xrange(e):
         adj[E[i,0]].append((i, E[i,1]))
         adj[E[i,1]].append((i, E[i,0]))
+    for i in xrange(v):
+        adj[i].sort(key=lambda x: x[1])
     return adj
 
 def build_edgeset(p, max_dist, min_dist, max_neighbors = None):
@@ -28,10 +30,12 @@ def build_edgeset(p, max_dist, min_dist, max_neighbors = None):
     def inbetween (v, l0, l1):
         return v >= l0 and v <= l1
 
+    print_info("Building edge set")
+
     V = xrange(p.shape[1])
 
     if max_neighbors == None:
-        return array(
+        A = array(
             [[i,j] for i in V for j in V if i < j and
              inbetween(norm(p[:,i] - p[:,j]), min_dist, max_dist)], 'i')
     else:
@@ -43,8 +47,9 @@ def build_edgeset(p, max_dist, min_dist, max_neighbors = None):
             for j in xrange(min(len(t), max_neighbors)):
                 E.add((min(i,t[j][1]), max(i,t[j][1])))
         A = array(list(E), 'i')
-        print len(A)
-        return A
+
+    print_info("\t#e = %d" % A.shape[0])
+    return A
 
 class Conf:
     pass

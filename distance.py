@@ -2,18 +2,15 @@
 from numpy import *
 from scipy.linalg.basic import *
 from scipy.linalg.decomp import *
-import sys, pickle, scipy.stats
+import pickle, scipy.stats
 from pylab import *
 from matplotlib.collections import LineCollection
 from geo import *
 from util import *
 from graph import *
+from sparselin import *
 
 EPS = 1e-12
-
-def print_info(s):
-    sys.stderr.write("INFO:%s\n" % s)
-    sys.stderr.flush()
 
 def L(p, E, noise_std):
     """
@@ -65,6 +62,7 @@ def random_graph(v, d, max_dist, min_dist, discardNonrigid = True, max_neighbors
 
 
 def rigidity(v, d, E, eps = EPS, rigidity_iter = 2, stress_iter = 2):
+    print_info("Calculating rigidity...")
     t = locally_rigid_rank(v, d)
     e = len(E)
     rigidity_rank = 0
@@ -114,6 +112,50 @@ def stress_matrix_from_vector(w, E, v):
         O[q,q] -= w[i]
     return O
 
+def sparse_stress_matrix_template(g):
+    adj = adjacency_list_from_edge_list(g)
+    v, d, e = v_d_e_from_graph(g)
+
+    nzval_idx = []
+    irow = []
+    pcol = [0]
+    for i in xrange(v):
+        nzval_idx.append(-1)
+        irow.append(i)
+        for e, dest in adj[i]:
+            if dest > i:
+                nzval_idx.append(e)
+                irow.append(dest)
+        pcol.append(len(irow))
+    return (array(nzval_idx, 'i'),
+            [array(map(lambda l: l[0], a), 'i') for a in adj],
+            array(irow, 'i'),
+            array(pcol,'i'))
+        
+
+def stress_matrix_eig_from_vector(w, sparse_template, nzval, nev, eigval, eigvec):
+    nzval_idx, adj_idx, irow, pcol = sparse_template
+    for i in xrange(1, len(pcol)):
+        nzval[pcol[i-1]+1:pcol[i]] = asarray(w[nzval_idx[pcol[i-1]+1:pcol[i]],:].T)
+        nzval[pcol[i-1]] = - sum(w[adj_idx[i-1]])
+
+    speig(n=len(pcol)-1,
+          nzval=nzval,
+          irow=irow,
+          pcol=pcol, lu='L',
+          nev=nev,
+          which='SM',
+          eigval=eigval,
+          eigvec=eigvec,
+          maxit=len(pcol)*100)
+
+    order =  range(nev)
+    order.sort(key = lambda i: abs(eigval[i]))
+    eigval[:] = eigval[order]
+    eigvec[:,:] = eigvec[:,order]
+
+    #print eigval
+
 figure(figsize=(12,8))
 
 def plot_info(stats, cov_spec, t, stress_spec, d,
@@ -159,11 +201,11 @@ def plot_info(stats, cov_spec, t, stress_spec, d,
     #Graph the geometry
     axes([margin+width, margin, width*2-margin*2, height*2-margin*2])
     title("Error")
-    scatter(x = approx_p2[0].A.ravel(), y = approx_p2[1].A.ravel(), s = 32,
+    scatter(x = approx_p2[0].A.ravel(), y = approx_p2[1].A.ravel(), s = 16,
             linewidth=(0.0), c = "green", marker = 'o', zorder=99, alpha=0.75)
-    scatter(x = approx_p[0].A.ravel(), y = approx_p[1].A.ravel(), s = 32,
+    scatter(x = approx_p[0].A.ravel(), y = approx_p[1].A.ravel(), s = 16,
             linewidth=(0.0), c = "r", marker = 'o', zorder=100, alpha=0.75)
-    scatter(x = p[0].A.ravel(), y = p[1].A.ravel(), s = 32,
+    scatter(x = p[0].A.ravel(), y = p[1].A.ravel(), s = 16,
             linewidth=(0.0), c = "b", marker = 'o', zorder =102, alpha=1)
     axis([-0.2, 1.2, -0.2, 1.2])
     gca().set_aspect('equal')
@@ -177,8 +219,8 @@ def plot_info(stats, cov_spec, t, stress_spec, d,
         (approx_p.T[i].A.ravel(), p.T[i].A.ravel())
         for i in xrange(v)], colors = "red", alpha=0.75))
 
-    fn = 'infoplot-n%.04f-k%.04f-s%2.02f.png' % (
-        stats["noise"], stats["perturb"], stats["sampling"])
+    fn = 'infoplot-v%d-n%.04f-k%.04f-s%2.02f.eps' % (
+        v, stats["noise"], stats["perturb"], stats["sampling"])
     print_info("%s dumped" % fn)
     savefig(fn)
 
@@ -244,8 +286,6 @@ def estimate_sub_stress_space(L_rhos, dim_T, g, edge_idx, vtx_idx = None):
             break
         prev_derivative = derivative
 
-    print t-1, sub_dim_T
-
     sub_S_basis = asmatrix(u[:,t-1:])
     return sub_S_basis, s
 
@@ -254,11 +294,14 @@ def get_k_ring_subgraphs(g, k):
     return k_rings of each vertex. Result is stored as two list, one
     vtx indices, one edge indices.
     """
+    print_info("Computing %d-ring subgraphs" % k)
     adj = adjacency_list_from_edge_list(g)
     E = g[1]
     v, d, e = v_d_e_from_graph(g)
     vtx_indices = [set([]) for i in xrange(v)]
     edge_indices = [set([]) for i in xrange(v)]
+    anv = 0
+    ane = 0
     for i in xrange(v):
         # do a length limited BFS:
         a = [(i, 0)]
@@ -278,41 +321,79 @@ def get_k_ring_subgraphs(g, k):
                 if dest in vtx_indices[i]:
                     edge_indices[i].add(edge)
 
-        print "%d-ring for vtx %d: nv = %d, ne = %d" % (k, i, len(vtx_indices[i]), len(edge_indices[i]))
+        anv = anv + len(vtx_indices[i])
+        ane = ane + len(edge_indices[i])
         
         vtx_indices[i] = array(list(vtx_indices[i]), 'i')
         edge_indices[i] = array(list(edge_indices[i]), 'i')
 
+    print_info("\taverage #v = %d, average #e = %d" % (anv/v, ane/v))
     return vtx_indices, edge_indices
 
 
 def estimate_stress_space_from_k_ring_subgraphs(L_rhos, dim_T, g, k):
     v, d, e = v_d_e_from_graph(g)
     vtx_indices, edge_indices = get_k_ring_subgraphs(g, k)
+
+    print_info("Computing stress space for each subgraph")
     sub_S_basis = []
     n = 0
+    nz = 0
     for i in xrange(v):
         sub_S_basis.append(estimate_sub_stress_space(L_rhos, dim_T, g, edge_indices[i], vtx_indices[i])[0])
         n = n + sub_S_basis[i].shape[1]
+        nz = nz + sub_S_basis[i].shape[0] * sub_S_basis[i].shape[1]
 
-    # Now unpack the various sub_S_basis into one big matrix
-    m = zeros((e, n))
-    j = 0;
-    for i in xrange(v):
-        j2 = j + sub_S_basis[i].shape[1]
-        m[edge_indices[i], j:j2] = sub_S_basis[i]
-        j = j2
+    # Now write a temporary file of the big sparse matrix
+    print_info("Write out %dx%d sparse matrix for external SVDing" % (e, n) )
+    f = open("input.st", "w")
+    f.write("%d %d %d\n" % (e, n, nz))
+    for k, B in enumerate(sub_S_basis):
+        for i in xrange(B.shape[1]):
+            f.write("%d" % B.shape[0])
+            for j in xrange(B.shape[0]):
+                f.write(" %d %f" % (edge_indices[k][j], B[j,i]))
+            f.write("\n")
+    f.close()
 
-    # finally return qr decomp on the big matrix
-    print m.shape
-    #q, r = qr(m, overwrite_a = 1, mode = 'qr')
-    #return q[:, :e-dim_T], ones((e))
+    # and use './svd' to svd factorize it
+    import os
+    os.system("./svd input.st -o output -d %d " % (e-dim_T))
 
+    print_info("Read back SVD result")
+    f = open("output-Ut", "r")      # read in columns
+    f.readline()                        # skip first line (dimension info)
+    u = zeros((e, e-dim_T), "d")
+    for i in xrange(e-dim_T):           # now grab each column
+        toks = string.split(f.readline())
+        c = array([map(float, toks)]).T
+        u[:,i] = c[:,0]
+    f.close()
+
+    f = open("output-S", "r")           # read in singular values
+    f.readline()
+    s = array(map(float, string.split(f.read())))
+
+    return u, s
     
-    u, s, vh = svd(m) # e by Cv, sparse, C^2 v non zero entries, C around 50
-    return u[:, :e-dim_T], s
+    ## @@@ The following uses scipy dense matrix routines
+
+    ## # Now unpack the various sub_S_basis into one big matrix
+    ## m = zeros((e, n))
+    ## j = 0;
+    ## for i in xrange(v):
+    ##     j2 = j + sub_S_basis[i].shape[1]
+    ##     m[edge_indices[i], j:j2] = sub_S_basis[i]
+    ##     j = j2
+
+    ## # finally return qr decomp on the big matrix
+    ## print m.shape
+
+    ##u, s, vh = svd(m) # e by Cv, sparse, C^2 v non zero entries, C around 50
+    #return u[:, :e-dim_T], s
     
 def estimate_stress_kernel(g, S_basis):
+
     p, E = g
     v, d, e = v_d_e_from_graph(g)
     
@@ -336,25 +417,47 @@ def estimate_stress_kernel(g, S_basis):
     #        j = len(s) - 1
     #    stress_mul[i] = -math.log(s[j])
 
-    print_info("stress space samples = %d" % ss_samples)
+    print_info("stress kernel samples = %d" % ss_samples)
+    sparse_template = sparse_stress_matrix_template(g)
+
+    nzval = zeros(sparse_template[0].shape, 'd')
+    eigval = zeros((n_per_matrix+1), 'd')
+    eigvec = zeros((v, n_per_matrix+1), 'd')
+    
     for i in xrange(ss_samples):
         w = stress_space[:, i]
+
+        # The following uses sparse matrix routines
+        ## stress_matrix_eig_from_vector(w=w,
+        ##                               sparse_template=sparse_template,
+        ##                               nzval = nzval,
+        ##                               nev = n_per_matrix+1,
+        ##                               eigval = eigval,
+        ##                               eigvec = eigvec)
+        ## stress_kernel[:, i*n_per_matrix : (i+1)*n_per_matrix] = eigvec[:,1:] * stress_mul[i]
+
+        # The following uses dense matrix routines
         omega = stress_matrix_from_vector(w, E, v)
-        eigval, eigvec = eig(omega)     # sparse
+        eigval, eigvec = eig(omega)     # v by v, sparse, 2vd non-zero entries
         eigval = abs(eigval)
     
         order =  range(v)
         order.sort(key = lambda i: eigval[i])
         stress_kernel[:, i*n_per_matrix : (i+1)*n_per_matrix] = eigvec[:,order[1:n_per_matrix+1]] * stress_mul[i]
 
-    stress_kernel_basis, ev, whatever = svd(stress_kernel) # dense
+        sys.stdout.write('.')
+        sys.stdout.flush()
+
+
+    print_info("Calculating dominant stress kernel...")
+    stress_kernel_basis, ev, whatever = svd(stress_kernel) # v by C, where C = n_per_matrix * ss_samples, dense
     return stress_kernel_basis[:, :d], ev
 
 def calculate_relative_positions(g, L_rho, q):
     B = optimal_linear_transform_for_l(q, g[1], L_rho)
     return B * q
 
-def graph_scale(g, perturb, noise_std, sampling):
+def graph_scale(g, perturb, noise_std, sampling, k):
     p, E = g
     v, d, e = v_d_e_from_graph(g)
 
@@ -366,7 +469,7 @@ def graph_scale(g, perturb, noise_std, sampling):
     L_rhos, L_rho = measure_L_rho(g, perturb, noise_std, n_samples)
     #S_basis, cov_spec = estimate_stress_space(L_rhos, dim_T)
     #S_basis, cov_spec = estimate_sub_stress_space(L_rhos, dim_T, g, range(len(E)))
-    S_basis, cov_spec = estimate_stress_space_from_k_ring_subgraphs(L_rhos, dim_T, g, 2)
+    S_basis, cov_spec = estimate_stress_space_from_k_ring_subgraphs(L_rhos, dim_T, g, k)
 
     K_basis, stress_spec = estimate_stress_kernel(g, S_basis)
     
@@ -405,8 +508,9 @@ def graph_scale(g, perturb, noise_std, sampling):
     return af_g_error
 
 def main():
+    import sys
     random.seed(0)
-    v = 100
+    v = 400
     d = 2
     k =  math.pow(2*(d+1), 1.0/d)/3.0
     dist_threshold = 4*k*math.pow(v, -1.0/d)
@@ -423,7 +527,7 @@ def main():
 
     noise_stds = array([0.01])
     perturbs = array([10])
-    samplings = array([0.6])
+    samplings = array([0.5])
     
     for noise_std in  noise_stds * dist_threshold:
         for perturb in perturbs * noise_std:
@@ -431,7 +535,8 @@ def main():
                 e = graph_scale(g = g, 
                                 perturb=max(1e-4, perturb),
                                 noise_std = noise_std,
-                                sampling = sampling)
+                                sampling = sampling,
+                                k = 3)
                 sys.stdout.flush()
 
 
