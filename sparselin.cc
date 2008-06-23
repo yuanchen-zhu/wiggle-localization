@@ -17,12 +17,13 @@ static bool arrayCheck(PyArrayObject *o, int requiredRank, int requiredType)
 
 static PyObject *sparse_eig(PyObject* *self, PyObject *args, PyObject *kwds)
 {
-    static char *kwlist[] = { "n", "nzval", "irow", "pcol", "lu", "nev", "which", "eigval", "eigvec", "maxit", NULL};
+    static char *kwlist[] = { "n", "nzval", "irow", "pcol", "lu", "nev", "which", "eigval", "eigvec", "maxit", "tol", NULL};
     PyArrayObject *nzval = NULL, *irow = NULL, *pcol = NULL, *eigval = NULL, *eigvec = NULL;
     int n, nev, maxit;
     char *which, *lu;
+    double tol;
 
-    if (! PyArg_ParseTupleAndKeywords(args, kwds, "iO!O!O!sisO!O!i", kwlist,
+    if (! PyArg_ParseTupleAndKeywords(args, kwds, "iO!O!O!sisO!O!id", kwlist,
                                       &n,
                                       &PyArray_Type, &nzval,
                                       &PyArray_Type, &irow,
@@ -32,7 +33,8 @@ static PyObject *sparse_eig(PyObject* *self, PyObject *args, PyObject *kwds)
                                       &which,
                                       &PyArray_Type, &eigval,
                                       &PyArray_Type, &eigvec,
-                                      &maxit))
+                                      &maxit,
+                                      &tol))
         return NULL;
 
     if (!arrayCheck(nzval, 1, NPY_DOUBLE) ||
@@ -71,6 +73,7 @@ static PyObject *sparse_eig(PyObject* *self, PyObject *args, PyObject *kwds)
     Matrix A(n, nzval->dimensions[0], (double*)nzval->data, (int*)irow->data, (int*)pcol->data, lu[0]);
     EigProb prob(nev, A, which);
     prob.ChangeMaxit(maxit);
+    prob.ChangeTol(tol);
     prob.FindEigenvectors();
     int d = prob.GetN();
     for (int i = 0, n = prob.ConvergedEigenvalues(); i < n; ++i) {
@@ -84,7 +87,7 @@ static PyObject *sparse_eig(PyObject* *self, PyObject *args, PyObject *kwds)
 }
 
 static char *speig_doc =
-"speig(n, nzval, irow, pcol, lu, nev, which, eigval, eigvec, maxit):\n\
+"speig(n, nzval, irow, pcol, lu, nev, which, eigval, eigvec, maxit, tol):\n\
 sparse eigen value and vector calculation.";
 
 static PyMethodDef sparselin_methods[] = {
