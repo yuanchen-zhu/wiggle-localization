@@ -17,8 +17,8 @@ EPS = 1e-12
 
 PARAM_V = 400
 PARAM_D = 2
-PARAM_NOISE_STDS = [0.02]               # [0.02]
-PARAM_PERTURBS = [10.0]
+PARAM_NOISE_STDS = [0.01]
+PARAM_PERTURBS = [10.0, 15.0]
 PARAM_SAMPLINGS = [2.5]
 
 
@@ -28,14 +28,15 @@ USE_SPARSE_SVD = True
 
 KERNEL_SAMPLES = 32 # Helps a lot going from 2 to 16 for noise cases, was 16
 ORTHO_SAMPLES = True # Helps a lot (reduce mean error by 2 times)
-MULT_NOISE = False
+MULT_NOISE = True
 EXACT_LOCAL_STRESS = False
 SS_SAMPLES = 60
-WEIGHT_KERNEL_SAMPLE = True
+WEIGHT_KERNEL_SAMPLE = False
 
 CONSOLIDATE_READ_FROM_CACHE = True
 CONSOLIDATE_WRITE_TO_CACHE = True
-    
+
+STRESS_VAL_PERC = 0
 
 # TODO: wrap in a class, so no g param for all functions
 
@@ -62,7 +63,7 @@ def L(p, E, noise_std):
     d = sqrt((v * v).sum(axis=0))
     noise = random.randn(len(E)) * noise_std
     if MULT_NOISE:
-        d *= 1 + noise
+        d *= (1 + noise)
     else:
         d += noise
     return asmatrix(d * d).T
@@ -218,6 +219,11 @@ def plot_info(stats, cov_spec, t, stress_spec, d,
     #semilogx()
     plot(xrange(1, 1+len(cov_spec)),cov_spec)
     axvline(E.shape[0]-t+1)
+
+    axhline(median(cov_spec)*STRESS_VAL_PERC/100)
+    
+    #axvline(len(cov_spec)*STRESS_PERC/100)
+    
     #axis([1, min(t*16, len(E))+1, 1e-4, 1e1])
     gca().set_aspect('auto')
     title("Cov. Spec.")
@@ -265,7 +271,7 @@ def plot_info(stats, cov_spec, t, stress_spec, d,
         (approx_p.T[i].A.ravel(), p.T[i].A.ravel())
         for i in xrange(v)], colors = "red", alpha=0.75, linewidth = 0.03 * point_size))
 
-    fn = 'infoplot-v%d-n%.04f-p%.04f-s%2.02f-ks%02d-os%s-ms%s-el%s-ss%03d-wks%s-%s' % (
+    fn = 'infoplot-v%d-n%.04f-p%.04f-s%2.02f-ks%02d-os%s-ms%s-el%s-ss%03d-wks%s-svp%03d-%s' % (
         v, stats["noise"], stats["perturb"], stats["sampling"],
         KERNEL_SAMPLES,
         str(ORTHO_SAMPLES)[0],
@@ -273,6 +279,7 @@ def plot_info(stats, cov_spec, t, stress_spec, d,
         str(EXACT_LOCAL_STRESS)[0],
         SS_SAMPLES,
         str(WEIGHT_KERNEL_SAMPLE)[0],
+        STRESS_VAL_PERC,
         STRESS_SAMPLE)
     print_info("%s.eps dumped" % fn)
     import os
@@ -504,9 +511,6 @@ def consolidate_sub_space(dim_T, sub_basis, sparse_param):
                 cPickle.dump((u, s),f)
                 f.close()
                 print_info("\tWrite to consolidation PCA cache %s" % fn)
-
-        return u, s
-
     else:
     
         #The following uses scipy dense matrix routines
@@ -534,10 +538,15 @@ def consolidate_sub_space(dim_T, sub_basis, sparse_param):
         # avg_local_n_v = ~30 for 2-ring, ~60 for 3-ring, ~100 for
         # 4-ring
 
-        u, s, vh = svd(m) 
-        return u[:, :e-dim_T], s
+        u, s, vh = svd(m)
+        u = u[:, :(e-dim_T)], s[:e-dimT]
 
-    # return m, zeros((e-dim_T))
+    thr = median(s) * STRESS_VAL_PERC /100
+    i = e-dim_T-1
+    while  i >= 0 and s[i] < thr:
+        i = i-1
+    print_info("Top %d (%f%%) of %d stresses used" % (i+1, 100*float(i+1)/(e-dim_T), e-dim_T))
+    return u[:,:i+1], s
 
 def sample_from_sub_stress_space(g, sub_S_basis, sparse_param):
     v, d, e = v_d_e_from_graph(g)
@@ -632,7 +641,7 @@ def calculate_relative_positions(g, L_rho, q):
 
 def graph_scale(g, perturb, noise_std, sampling, k, min_neighbor):
 
-    print_info('Graph Scale PARAMS:\n\tv=%d\n\tnoise=%.04f\n\tperturb=%.04f\n\tsampling=%2.02f\n\tkernel_samples=%2d\n\tortho_samples=%s\n\tmult_noise=%s\n\texact_local_stress=%s\n\tstress_samples=%3d\n\tstress_sample_method=%s\n\tweight_kernel_sample=%s' % (
+    print_info('Graph Scale PARAMS:\n\tv=%d\n\tnoise=%.04f\n\tperturb=%.04f\n\tsampling=%2.02f\n\tkernel_samples=%2d\n\tortho_samples=%s\n\tmult_noise=%s\n\texact_local_stress=%s\n\tstress_samples=%3d\n\tstress_sample_method=%s\n\tweight_kernel_sample=%s\n\tstress_val_perc=%d%%\n' % (
         v_d_e_from_graph(g)[0], noise_std, perturb, sampling,
         KERNEL_SAMPLES,
         str(ORTHO_SAMPLES)[0],
@@ -640,7 +649,8 @@ def graph_scale(g, perturb, noise_std, sampling, k, min_neighbor):
         str(EXACT_LOCAL_STRESS)[0],
         SS_SAMPLES,
         STRESS_SAMPLE,
-        str(WEIGHT_KERNEL_SAMPLE)[0]))
+        str(WEIGHT_KERNEL_SAMPLE)[0],
+        STRESS_VAL_PERC))
 
     p, E = g
     v, d, e = v_d_e_from_graph(g)
@@ -663,7 +673,12 @@ def graph_scale(g, perturb, noise_std, sampling, k, min_neighbor):
         n_samples = int(max(map(lambda vi: len(vi) * d, vtx_indices)) * sampling)
         L_rhos, L_rho = measure_L_rho(g, perturb, noise_std, n_samples)
 
-        sub_S_basis, sparse_param = estimate_sub_stress_space_from_subgraphs(L_rhos, dim_T, g, vtx_indices, edge_indices)
+        sub_S_basis, sparse_param = estimate_sub_stress_space_from_subgraphs(
+            L_rhos = L_rhos,
+            dim_T = dim_T,
+            g = g,
+            vtx_indices = vtx_indices,
+            edge_indices = edge_indices)
 
         if STRESS_SAMPLE == 'semilocal':
             S_basis, cov_spec = consolidate_sub_space(dim_T, sub_S_basis, sparse_param)
@@ -725,12 +740,15 @@ def main():
                      discardNonrigid = True,
                      max_neighbors = 10)
 
-    noise_stds = array(PARAM_NOISE_STDS, 'd') * dist_threshold * 0.5
-    perturbs = array(PARAM_PERTURBS, 'd') 
     if MULT_NOISE:
-        noise_stds /= (dist_threshold * 0.5)
-        perturbs *= (0.5  * dist_threshold)
-        
+        noise_stds = array(PARAM_NOISE_STDS, 'd')
+        m = median(sqrt(L(g[0], g[1], 0.0).A.ravel()))
+        print_info("Edge length median = %f" % m)
+        perturbs = m * array(PARAM_PERTURBS, 'd')
+    else:
+        noise_stds = array(PARAM_NOISE_STDS, 'd') * dist_threshold
+        perturbs = array(PARAM_PERTURBS, 'd')
+
     for noise_std in noise_stds:
         for perturb in perturbs * noise_std:
             for sampling in PARAM_SAMPLINGS:
