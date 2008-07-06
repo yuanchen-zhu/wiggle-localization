@@ -6,7 +6,6 @@ from settings import *
 from geo import *
 from util import *
 from graph import *
-from sparselin import *
 from tri import *
 from plot import *
 from genrig import *
@@ -112,50 +111,6 @@ def random_graph(v, d, max_dist, min_dist, discardNonrigid, max_neighbors, floor
             print_info("Graph created after %d tries" % i)
 
         return g
-
-def sparse_stress_matrix_template(g):
-    adj = g.adj
-
-    nzval_idx = []
-    irow = []
-    pcol = [0]
-    for i in xrange(g.v):
-        nzval_idx.append(-1)
-        irow.append(i)
-        for e, dest in adj[i]:
-            if dest > i:
-                nzval_idx.append(e)
-                irow.append(dest)
-        pcol.append(len(irow))
-    return (array(nzval_idx, 'i'),
-            [array(map(lambda l: l[0], a), 'i') for a in adj],
-            array(irow, 'i'),
-            array(pcol,'i'))
-        
-
-def stress_matrix_speig_from_vector(w, sparse_template, nzval, nev, eigval, eigvec):
-    nzval_idx, adj_idx, irow, pcol = sparse_template
-    for i in xrange(1, len(pcol)):
-        nzval[pcol[i-1]+1:pcol[i]] = asarray(w[nzval_idx[pcol[i-1]+1:pcol[i]],:].T)
-        nzval[pcol[i-1]] = - sum(w[adj_idx[i-1]])
-
-    speig(n=len(pcol)-1,
-          nzval=nzval,
-          irow=irow,
-          pcol=pcol, lu='L',
-          nev=nev,
-          which='SM',
-          eigval=eigval,
-          eigvec=eigvec,
-          maxit=len(pcol)*100,
-          tol=0.5)
-
-    order =  range(nev)
-    order.sort(key = lambda i: abs(eigval[i]))
-    eigval[:] = eigval[order]
-    eigvec[:,:] = eigvec[:,order]
-
-    #print eigval
 
 def check_gr(g):
     if not 'gr' in g.__dict__ or g.gr.type == 'N':
@@ -457,38 +412,23 @@ def estimate_stress_kernel(g, stress_samples):
     stress_kernel = zeros((v, ss_samples * n_per_matrix))
 
     print_info("Computing kernel for %d stress" % ss_samples)
-    sparse_template = sparse_stress_matrix_template(g)
-
-    nzval = zeros(sparse_template[0].shape, 'd')
-    eigval = zeros((n_per_matrix+1), 'd')
-    eigvec = zeros((v, n_per_matrix+1), 'd')
 
     for i in xrange(ss_samples):
         w = stress_samples[:, i]
 
-        if USE_SPARSE_EIG:
-            # The following uses sparse matrix routines
-            stress_matrix_speig_from_vector(w=w,
-                                            sparse_template=sparse_template,
-                                            nzval = nzval,
-                                            nev = n_per_matrix+1,
-                                            eigval = eigval,
-                                            eigvec = eigvec)
-            stress_kernel[:, i*n_per_matrix : (i+1)*n_per_matrix] = eigvec[:,1:]
-        else:
-            # The following uses dense matrix routines
-            omega = stress_matrix_from_vector(w, E, v)
-            eigval, eigvec = eig(omega)     # v by v, sparse, 2vd non-zero entries
-            eigval = abs(eigval)
-        
-            order =  range(v)
-            order.sort(key = lambda i: eigval[i])
+        # The following uses dense matrix routines
+        omega = stress_matrix_from_vector(w, E, v)
+        eigval, eigvec = eig(omega)     # v by v, sparse, 2vd non-zero entries
+        eigval = abs(eigval)
 
-            k = i*n_per_matrix
-            stress_kernel[:, k:k+n_per_matrix] = eigvec[:,order[1:n_per_matrix+1]]
-            if WEIGHT_KERNEL_SAMPLE:
-                for j in xrange(n_per_matrix):
-                    stress_kernel[:, k+j] *= -math.log(eigval[order[j + 1]])
+        order =  range(v)
+        order.sort(key = lambda i: eigval[i])
+
+        k = i*n_per_matrix
+        stress_kernel[:, k:k+n_per_matrix] = eigvec[:,order[1:n_per_matrix+1]]
+        if WEIGHT_KERNEL_SAMPLE:
+            for j in xrange(n_per_matrix):
+                stress_kernel[:, k+j] *= -math.log(eigval[order[j + 1]])
 
         #print eigval[order[0: n_per_matrix]]
         sys.stdout.write('.')
@@ -631,7 +571,6 @@ def main():
     k =  math.pow(2*(PARAM_D+1), 1.0/PARAM_D)/3.0
     dist_threshold = PARAM_DIST_THRESHOLD*k*math.pow(PARAM_V, -1.0/PARAM_D)
 
-    #floor_plan = FloorPlan(FLOOR_PLAN_FN)
     floor_plan = Floorplan("%s/%s" % (DIR_DATA, FLOOR_PLAN_FN))
 
     # hand pick spaces to use so can get ggr rooms

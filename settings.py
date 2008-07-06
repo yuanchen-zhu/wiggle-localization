@@ -1,6 +1,6 @@
 EPS = 1e-12
 
-PARAM_V = 400
+PARAM_V = 200
 PARAM_D = 2
 PARAM_NOISE_STDS = [0.000]
 PARAM_PERTURBS = [10.0]
@@ -8,7 +8,6 @@ PARAM_SAMPLINGS = [2.5]
 PARAM_DIST_THRESHOLD = 3.5
 
 STRESS_SAMPLE = 'global' # global | semilocal | local
-USE_SPARSE_EIG = False
 USE_SPARSE_SVD = True
 
 KERNEL_SAMPLES = 16 # Helps a lot going from 2 to 16 for noise cases, was 16
@@ -29,7 +28,7 @@ TOP_STRESS_KERNEL = 8
 
 MAX_EDGE_LEN_IN_METER = 30.0
 METER_RATIO = 0
-MAX_NEIGHBORS = 8
+MAX_NEIGHBORS = 10
 
 MIN_LOCAL_NBHD = 30
 
