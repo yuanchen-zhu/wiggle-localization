@@ -201,51 +201,6 @@ def calculate_exact_sub_stress_space(g, edge_idx, vtx_idx = None):
     return u[:,t:], s, (t-sub_dim_T)
     
 
-def get_k_ring_subgraphs(g, k, min_neighbor):
-    """
-    return k_rings of each vertex. If the #v of the ring is less than
-    min_neighbor, additional vertices in larger rings are added till
-    at least min_neighbor of them is in the graph. Result is stored
-    as two list, one vtx indices, one edge indices.
-    """
-    print_info("Computing %d-ring subgraphs" % k)
-    v, adj = g.v, g.adj
-    vtx_indices = [set([]) for i in xrange(v)]
-    edge_indices = [set([]) for i in xrange(v)]
-    anv = 0
-    ane = 0
-    min_neighbor = min(min_neighbor, v)
-    for i in xrange(v):
-        # do a length limited BFS:
-        a = [(i, 0)]
-        p = 0
-        vtx_indices[i].add(i)
-        prev_ring = set([i])
-        cur_ring = 0
-        while cur_ring < k or len(vtx_indices[i]) < min_neighbor:
-            cur_ring = cur_ring + 1
-            new_ring = set([])
-            for w in prev_ring:
-                for edge, dest in adj[w]:
-                    if not (dest in vtx_indices[i]):
-                        vtx_indices[i].add(dest)
-                        new_ring.add(dest)
-            prev_ring = new_ring
-                        
-                        
-        for w in vtx_indices[i]:
-            for edge, dest in adj[w]:
-                if dest in vtx_indices[i]:
-                    edge_indices[i].add(edge)
-
-        anv = anv + len(vtx_indices[i])
-        ane = ane + len(edge_indices[i])
-        
-        vtx_indices[i] = array(list(vtx_indices[i]), 'i')
-        edge_indices[i] = array(list(edge_indices[i]), 'i')
-
-    print_info("\taverage #v = %d, average #e = %d" % (anv/v, ane/v))
-    return vtx_indices, edge_indices
 
 def estimate_sub_stress_space_from_subgraphs(L_rhos, dim_T, g, vtx_indices, edge_indices):
     v, e = g.v, g.e
@@ -407,11 +362,15 @@ def estimate_stress_kernel(g, stress_samples):
     v, d, E = g.v, g.d, g.E
     ss_samples = stress_samples.shape[1]
     
-    n_per_matrix = max(d, min(d*KERNEL_SAMPLES, v/5)) # number of basis vectors to pick from kernel of each matrix
+    n_per_matrix = min((g.gr.stress_kernel_dim - 1) * KERNEL_SAMPLES, v)
     print_info("Taking %d eigenvectors from each stress matrix" % n_per_matrix)
     stress_kernel = zeros((v, ss_samples * n_per_matrix))
 
     print_info("Computing kernel for %d stress" % ss_samples)
+
+    vec_1 = asmatrix(ones((v, 1), 'd'))
+    vec_1 /= norm(vec_1)
+    vec_1_op = vec_1 * vec_1.T
 
     for i in xrange(ss_samples):
         w = stress_samples[:, i]
@@ -424,11 +383,17 @@ def estimate_stress_kernel(g, stress_samples):
         order =  range(v)
         order.sort(key = lambda i: eigval[i])
 
+        kern = eigvec[:,order[:n_per_matrix+1]]
+
+        # for accuracy, remove vec_1 component
+        kern = svd(kern - vec_1_op * kern)[0][:,:n_per_matrix]
+        
         k = i*n_per_matrix
-        stress_kernel[:, k:k+n_per_matrix] = eigvec[:,order[1:n_per_matrix+1]]
+        stress_kernel[:, k:k+n_per_matrix] = kern
+        
         if WEIGHT_KERNEL_SAMPLE:
             for j in xrange(n_per_matrix):
-                stress_kernel[:, k+j] *= -math.log(eigval[order[j + 1]])
+                stress_kernel[:, k+j] *= -math.log(eigval[order[j]])
 
         #print eigval[order[0: n_per_matrix]]
         sys.stdout.write('.')
@@ -441,14 +406,18 @@ def estimate_stress_kernel(g, stress_samples):
     # Cross match TOP_STRESS_KERENL vectors with the stress samples:
     error = zeros((ss_samples))
     mean_error = []
-    for i in xrange(TOP_STRESS_KERNEL):
+    for i in xrange(max(TOP_STRESS_KERNEL, g.gr.stress_kernel_dim)):
+        if i == 0:
+            k = vec_1
+        else:
+            k = stress_kernel_basis[:,i-1:i]
         for j in xrange(ss_samples):
             m = stress_matrix_from_vector(stress_samples[:,j], E, v)
-            error[j] = norm(m * stress_kernel_basis[:,i:i+1])
+            error[j] = norm(m * k)
         mean_error.append(mean(error))
     print_info("Mean norm of product with stress matrix for top agg. kernel:\n\t%s" % str(mean_error))
 
-    return stress_kernel_basis[:, :d], ev
+    return stress_kernel_basis[:, :g.gr.stress_kernel_dim], ev
 
 def calculate_relative_positions(g, L_rho, q):
     B = optimal_linear_transform_for_l(q, g.E, L_rho)
@@ -491,9 +460,9 @@ def graph_scale(g, perturb, noise_std, sampling, k, min_neighbor, floor_plan):
         stress_samples = sample_from_stress_space(S_basis)
         
     else:
-        vtx_indices, edge_indices = get_k_ring_subgraphs(g, k, min_neighbor)
+        vtx_indices, edge_indices = g.get_k_ring_subgraphs(k, min_neighbor)
 
-        n_samples = int(max(map(lambda vi: len(vi) * d, vtx_indices)) * sampling)
+        n_samples = int(max([len(vi) * d for vi in vtx_indices]) * sampling)
         L_rhos, L_rho = measure_L_rho(g, perturb, noise_std, n_samples)
 
         sub_S_basis, sparse_param = estimate_sub_stress_space_from_subgraphs(
@@ -513,7 +482,7 @@ def graph_scale(g, perturb, noise_std, sampling, k, min_neighbor, floor_plan):
 
     K_basis, stress_spec = estimate_stress_kernel(g, stress_samples)
     
-    q = asmatrix(K_basis.T) # coordinate vector
+    q = asmatrix(K_basis[:,:d].T) # coordinate vector
 
     T_q = calculate_relative_positions(g, L_rho, q)
 

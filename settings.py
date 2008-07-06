@@ -10,7 +10,7 @@ PARAM_DIST_THRESHOLD = 3.5
 STRESS_SAMPLE = 'global' # global | semilocal | local
 USE_SPARSE_SVD = True
 
-KERNEL_SAMPLES = 16 # Helps a lot going from 2 to 16 for noise cases, was 16
+KERNEL_SAMPLES = 2 # Helps a lot going from 2 to 16 for noise cases, was 16
 ORTHO_SAMPLES = True # Helps a lot (reduce mean error by 2 times)
 MULT_NOISE = False
 EXACT_LOCAL_STRESS = False
