@@ -1,159 +1,125 @@
 #!/usr/bin/python
-from numpy import *
-from scipy.linalg.basic import *
-from scipy.linalg.decomp import *
 import scipy.stats
 import cPickle
-from pylab import *
-from matplotlib.collections import LineCollection
-from matplotlib.patches import Circle
+
+from settings import *
 from geo import *
 from util import *
 from graph import *
 from sparselin import *
-
-EPS = 1e-12
-
-
-PARAM_V = 400
-PARAM_D = 2
-PARAM_NOISE_STDS = [0.01]
-PARAM_PERTURBS = [10.0, 15.0]
-PARAM_SAMPLINGS = [2.5]
-
-
-STRESS_SAMPLE = 'semilocal' # global | semilocal | local
-USE_SPARSE_EIG = False
-USE_SPARSE_SVD = True
-
-KERNEL_SAMPLES = 32 # Helps a lot going from 2 to 16 for noise cases, was 16
-ORTHO_SAMPLES = True # Helps a lot (reduce mean error by 2 times)
-MULT_NOISE = True
-EXACT_LOCAL_STRESS = False
-SS_SAMPLES = 60
-WEIGHT_KERNEL_SAMPLE = False
-
-CONSOLIDATE_READ_FROM_CACHE = True
-CONSOLIDATE_WRITE_TO_CACHE = True
-
-STRESS_VAL_PERC = 0
-
-# TODO: wrap in a class, so no g param for all functions
-
-class DOFTooFew(Exception):
-    pass
+from tri import *
+from plot import *
+from genrig import *
+from stress import *
+from numpy import *
+#from floorplan import *
+from mitquest import Floorplan
+from scipy.linalg.basic import *
+from scipy.linalg.decomp import *
 
 class NotLocallyRigid(Exception):
-    pass
-
-class NotGloballyRigid(Exception):
     pass
 
 class TooFewSamples(Exception):
     pass
     
 
-def L(p, E, noise_std):
+def build_edgeset(p, max_dist, min_dist, max_neighbors = None, floor_plan = None):
     """
-    p is d x n and encodes n d-dim points. E is k x 2 and encodes the
-    edge set. Returns k-dim column vector containing the squared
-    distances of the edges.
+    Given a d x n numpyarray p encoding n d-dim points, returns a k x
+    2 integer numpyarray encoding k edges whose two ends are distanced
+    less than max_dist apart, and each vertex has max number of
+    neighbors <= max_neighbors.
     """
-    v = asarray(p[:, E[:,0]] - p[:, E[:,1]])
-    d = sqrt((v * v).sum(axis=0))
-    noise = random.randn(len(E)) * noise_std
-    if MULT_NOISE:
-        d *= (1 + noise)
+    def inbetween (v, l0, l1):
+        return v >= l0 and v <= l1
+
+    print_info("Building edge set")
+
+    V = xrange(p.shape[1])
+
+    if max_neighbors == None:
+        A = array(
+            [[i,j] for i in V for j in V if i < j and
+             inbetween(norm(p[:,i] - p[:,j]), min_dist, max_dist) and
+             (floor_plan == None or
+              not floor_plan.intersect(p[:,i], p[:,j]))], 'i')
     else:
-        d += noise
-    return asmatrix(d * d).T
+        E = set([])
+        for i in V:
+            t = [(norm(p[:,i] - p[:,j]), j)
+                 for j in V if i != j]
+            t.sort(key = lambda x: x[0])
+            t = filter(lambda x: inbetween(x[0], min_dist, max_dist), t)
 
-def locally_rigid_rank(v, d):
-    return v * d - chooses(d+1,2)
+            j = k = 0
+            while j < len(t) and k < max_neighbors:
+                if inbetween(t[j][0], min_dist, max_dist) and (
+                    floor_plan == None or not floor_plan.intersect(p[:,i], p[:,t[j][1]])):
+                    E.add((min(i, t[j][1]), max(i,t[j][1])))
+                    k = k + 1
+                j = j + 1
+              
+        A = array(list(E), 'i')
 
-def random_p(v, d):
-    return asmatrix(array(random.random((d,v)), order='FORTRAN'))
+    print_info("\t#e = %d" % A.shape[0])
+    return A
 
-def random_graph(v, d, max_dist, min_dist, discardNonrigid = True, max_neighbors = 12):
+
+def random_graph(v, d, max_dist, min_dist, discardNonrigid, max_neighbors, floor_plan):
     i = 0
     while 1:
-        p = random_p(v, d)
-        E = build_edgeset(p, max_dist, min_dist, max_neighbors)
+        p = random_p(v, d, lambda p:floor_plan.inside(p))
+        E = build_edgeset(p, max_dist, min_dist, max_neighbors, floor_plan)
         e = len(E)
         i = i + 1
+        g = Graph(p, E)
+
         if discardNonrigid:
-            t = locally_rigid_rank(v, d)
-            if t >= e:
-                raise DOFTooFew()
-            rig =  rigidity(v, d, E)
-            if rig != "G":
+            def filter_dangling_v(g):
+                while 1:
+                    ov = g.v
+                    adj = g.adj
+                    g = subgraph(g, [i for i in xrange(g.v) if len(adj[i]) > d])
+                    if g.v == ov:
+                        break
+                return g
+
+            def filter_dangling_c(g):
+                cc, cn = g.connected_components()
+                if len(cc) == 1:
+                    return g
+                c = argmax(cc)
+                return subgraph(g, [i for i in xrange(g.v) if cn[i] == c])
+
+            print_info("|V|=%d |E|=%d" % (g.v, g.e))
+            print_info("Filtering dangling vertices and components...")
+            while 1:
+                oldv = g.v
+                g = filter_dangling_v(g)
+                g = filter_dangling_c(g)
+                if oldv == g.v:
+                    print_info("Done! |V|=%d |E|=%d" % (g.v, g.e))
+                    break
+                print_info("\t|V|=%d |E|=%d" % (g.v, g.e))
+            
+            gr = GenericRigidity(g.v, g.d, g.E)
+            if gr.type == 'N':
+                print_info("Not generically locally rigid")
                 continue
-        if discardNonrigid:
-            print_info("Globally rigid graph created after %d tries" % i)
+            g.gr = gr
 
-        print_info("|V|=%d |E|=%d" % (v, e))
-        return p, E
+            print_info("Graph created after %d tries" % i)
 
-
-def rigidity(v, d, E, eps = EPS, rigidity_iter = 2, stress_iter = 2):
-    print_info("Calculating rigidity...")
-    t = locally_rigid_rank(v, d)
-    e = len(E)
-    rigidity_rank = 0
-    stress_kernel_dim = e
-
-    for x in xrange(rigidity_iter):
-        p = random_p(v, d)
-        D = zeros((len(E), d * v))
-        for k in xrange(len(E)):
-            i, j = E[k][0], E[k][1]
-            diff_ij = p[:,i] - p[:,j]
-            D[k, i*d:i*d+d] = 2.0 * diff_ij.T
-            D[k, j*d:j*d+d] = -2.0 * diff_ij.T
-        u, s, vh = svd(D)               # E by dv, sparse, 2dE non-zero
-        rigidity_rank = max(rigidity_rank, len(s[s >= eps]))
-
-        if rigidity_rank != t:
-            continue
-
-        stress_basis = u[:,t:]
-        for y in xrange(stress_iter):
-            w = stress_basis * asmatrix(random.random((e - t, 1)))
-            w /= norm(w)
-            omega = stress_matrix_from_vector(w, E, v)
-            eigval, eigvec = eig(omega) # sparse
-            abs_eigval = abs(eigval)
-            stress_kernel_dim = min(stress_kernel_dim,
-                                    len(abs_eigval[abs_eigval <= eps]))
-
-        if rigidity_rank == t and stress_kernel_dim == d + 1:
-            break
-    
-    if rigidity_rank != t:
-        return "N"
-    elif stress_kernel_dim != d + 1:
-        return "L"
-    else:
-        return "G"
-
-def stress_matrix_from_vector(w, E, v):
-    O = asmatrix(zeros((v,v), 'd'))
-    V = xrange(v)
-    for i in xrange(len(E)):
-        p, q = E[i][0], E[i][1]
-        O[p,q] = O[q,p] = w[i]
-        O[p,p] -= w[i]
-        O[q,q] -= w[i]
-    return O
+        return g
 
 def sparse_stress_matrix_template(g):
-    adj = adjacency_list_from_edge_list(g)
-    v, d, e = v_d_e_from_graph(g)
+    adj = g.adj
 
     nzval_idx = []
     irow = []
     pcol = [0]
-    for i in xrange(v):
+    for i in xrange(g.v):
         nzval_idx.append(-1)
         irow.append(i)
         for e, dest in adj[i]:
@@ -191,129 +157,20 @@ def stress_matrix_speig_from_vector(w, sparse_template, nzval, nev, eigval, eigv
 
     #print eigval
 
-figure(figsize=(12,8))
-
-def plot_info(stats, cov_spec, t, stress_spec, d,
-              p, approx_p, approx_p2, v, E):
-    margin = 0.05
-    width = 1.0/3.0
-    height = (1.0-margin*2)/2.0
-
-    clf()
-
-    axes([0,0,1,1-margin*2], frameon=False, xticks=[], yticks=[])
-    title('Noise:%.04f   Perturb.:%.04f   Measurements:%d'
-          % (stats["noise"], stats["perturb"], stats["samples"]))
-    figtext(width*2-margin, height*2-margin*1.5,
-            'aff. err: %.06f\naff. L-err: %.06f'
-            % (stats["af g error"], stats["af l error"]),
-            ha = "right", va = "top", color = "green")
-    figtext(width*3-margin*2, height*2-margin*1.5,
-            'err: %.06f\nL-err: %.06f' %
-            (stats["l g error"], stats["l l error"]),
-            ha = "right", va = "top", color = "red")
-    
-    
-    #Graph the spectral distribution of the covariance matrix
-    axes([margin, margin, width-margin*2, height-margin*2])
-    #semilogx()
-    plot(xrange(1, 1+len(cov_spec)),cov_spec)
-    axvline(E.shape[0]-t+1)
-
-    axhline(median(cov_spec)*STRESS_VAL_PERC/100)
-    
-    #axvline(len(cov_spec)*STRESS_PERC/100)
-    
-    #axis([1, min(t*16, len(E))+1, 1e-4, 1e1])
-    gca().set_aspect('auto')
-    title("Cov. Spec.")
-
-    #Graph the spectral distribution of the stress matrix
-    axes([margin, height+margin, width-margin*2, height-margin*2])
-    #loglog()
-    semilogx()
-    plot(xrange(1, 1 + len(stress_spec)), stress_spec)
-    axvline(d)
-    axvline(d+1)
-    #axis([1, 1+len(stress_spec), 1e-2, 1e2 ])
-    gca().set_aspect('auto')
-    title("Agg. Stress Kern. Spec.")
-
-    #Graph the geometry
-    axes([margin+width, margin, width*2-margin*2, height*2-margin*2])
-    title("Error")
-    point_size = 20*math.sqrt(30)/math.sqrt(v)
-    scatter(x = approx_p2[0].A.ravel(), y = approx_p2[1].A.ravel(), s = point_size,
-            linewidth=(0.0), c = "green", marker = 'o', zorder=99, alpha=0.75)
-    scatter(x = approx_p[0].A.ravel(), y = approx_p[1].A.ravel(), s = point_size,
-            linewidth=(0.0), c = "r", marker = 'o', zorder=100, alpha=0.75)
-    scatter(x = p[0].A.ravel(), y = p[1].A.ravel(), s = point_size,
-            linewidth=(0.0), c = "b", marker = 'o', zorder =102, alpha=1)
-
-    
-    axis([-0.2, 1.2, -0.2, 1.2])
-    gca().set_aspect('equal')
-
-    gca().add_patch(Circle((0.5, 1.1),
-                           radius = stats["perturb"],
-                           linewidth=0.03 * point_size,
-                           fill=False,
-                           alpha = 0.5,
-                           facecolor = "lightgrey",
-                           edgecolor = "black"))
-
-    gca().add_collection(LineCollection([
-        p.T[e] for e in E], colors = "lightgrey", alpha=0.75, linewidth=0.03 * point_size))
-    gca().add_collection(LineCollection([
-        (approx_p2.T[i].A.ravel(), p.T[i].A.ravel())
-        for i in xrange(v)], colors = "green", alpha=0.75, linewidth= 0.03 * point_size))
-    gca().add_collection(LineCollection([
-        (approx_p.T[i].A.ravel(), p.T[i].A.ravel())
-        for i in xrange(v)], colors = "red", alpha=0.75, linewidth = 0.03 * point_size))
-
-    fn = 'infoplot-v%d-n%.04f-p%.04f-s%2.02f-ks%02d-os%s-ms%s-el%s-ss%03d-wks%s-svp%03d-%s' % (
-        v, stats["noise"], stats["perturb"], stats["sampling"],
-        KERNEL_SAMPLES,
-        str(ORTHO_SAMPLES)[0],
-        str(MULT_NOISE)[0],
-        str(EXACT_LOCAL_STRESS)[0],
-        SS_SAMPLES,
-        str(WEIGHT_KERNEL_SAMPLE)[0],
-        STRESS_VAL_PERC,
-        STRESS_SAMPLE)
-    print_info("%s.eps dumped" % fn)
-    import os
-    savefig("%s.eps" % fn)
-    os.system("epstopdf %s.eps" %fn)
-    print_info("%s.pdf generated" % fn)
-    os.system("gnome-open %s.pdf" %fn)
-
-def check_ggr(g):
-    p, E = g
-    v, d, e = v_d_e_from_graph(g)
-    
-    # Sanity check: is the graph generic globally rigid
-    dim_T = locally_rigid_rank(v, d)
-    if dim_T >= e:
-        raise DOFTooFew()
-    else:
-        rig =  rigidity(v, d, E)
-        if rig == "N": raise NotLocallyRigid()
-        elif rig == "L": raise NotGloballyRigid()
+def check_gr(g):
+    if not 'gr' in g.__dict__ or g.gr.type == 'N':
+        raise NotLocallyRigid()
 
 def measure_L_rho(g, perturb, noise_std, n_samples):
-    p, E = g
-    v, d, e = v_d_e_from_graph(g)
-
     print_info("#measurements = %d" % n_samples)
 
-    L_rhos = asmatrix(zeros((e, n_samples), 'd'))
+    L_rhos = asmatrix(zeros((g.e, n_samples), 'd'))
     for i in xrange(n_samples):
-        delta = asmatrix(random.random((d,v))) - 0.5
+        delta = asmatrix(random.random((g.d, g.v))) - 0.5
         delta *= (perturb*2)
-        L_rhos[:,i] = L(p + delta, E, noise_std)
+        L_rhos[:,i] = L(g.p + delta, g.E, noise_std)
 
-    return L_rhos, L(p, E, noise_std)
+    return L_rhos, L(g.p, g.E, noise_std)
 
 def estimate_stress_space(L_rhos, dim_T):
     u, s, vh = svd(L_rhos)              # dense
@@ -328,17 +185,17 @@ def estimate_sub_stress_space(L_rhos, g, edge_idx, vtx_idx = None):
     edge_idx is a 1-d array of edge indices. Only the indexed edges
     have the correponding components of the stress space calculated.
     """
-    u, s, vh = svd(L_rhos[edge_idx, :]) # dense
+    u, s, vh = svd_conv(L_rhos[edge_idx, :]) # dense
 
     if vtx_idx != None:
         v = len(vtx_idx)
     else:
-        v = len(affected_vertices(g[1], edge_idx))
-    d = v_d_e_from_graph(g)[1]
+        v = len(affected_vertices(g.E, edge_idx))
+    d = g.d
 
     # sanity check for subgraph
     sub_dim_T = locally_rigid_rank(v, d)
-    if sub_dim_T >= len(edge_idx) or sub_dim_T >= L_rhos.shape[1]:
+    if sub_dim_T > len(edge_idx) or sub_dim_T > L_rhos.shape[1]:
         raise TooFewSamples()
 
     # Now find the actual dimension of the tangent space, it should be
@@ -353,11 +210,11 @@ def estimate_sub_stress_space(L_rhos, g, edge_idx, vtx_idx = None):
         t = t + 1
 
     sub_S_basis = asmatrix(u[:,t-1:])
-    return sub_S_basis, s
+    return sub_S_basis, s, (t-1-sub_dim_T)
 
 # This doesn't work for some reason!
 def calculate_exact_sub_stress_space(g, edge_idx, vtx_idx = None):
-    p, E = g
+    p, E = g.p, g.E
     if vtx_idx == None:
         vtx_idx = affected_vertices(E, edge_idx)
     v = len(vtx_idx)
@@ -366,7 +223,7 @@ def calculate_exact_sub_stress_space(g, edge_idx, vtx_idx = None):
     for i, w in enumerate(vtx_idx):
         invert_vtx_idx[w] = i
 
-    d = v_d_e_from_graph(g)[1]
+    d = g.d
 
     D = zeros((len(edge_idx), d * v))
     print D.shape
@@ -379,13 +236,14 @@ def calculate_exact_sub_stress_space(g, edge_idx, vtx_idx = None):
         D[k, j*d:j*d+d] = -2.0 * diff_ij.T
 
     u, s, vh = svd(D)               # E by dv, sparse, 2dE non-zero
-    t = locally_rigid_rank(v, d)
+    sub_dim_T =  locally_rigid_rank(v, d)
+    t = sub_dim_T
     while t < min(len(edge_idx), v * d):
         if s[t] < EPS:
             break
         t = t + 1
 
-    return u[:,t:], s
+    return u[:,t:], s, (t-sub_dim_T)
     
 
 def get_k_ring_subgraphs(g, k, min_neighbor):
@@ -396,9 +254,7 @@ def get_k_ring_subgraphs(g, k, min_neighbor):
     as two list, one vtx indices, one edge indices.
     """
     print_info("Computing %d-ring subgraphs" % k)
-    adj = adjacency_list_from_edge_list(g)
-    E = g[1]
-    v, d, e = v_d_e_from_graph(g)
+    v, adj = g.v, g.adj
     vtx_indices = [set([]) for i in xrange(v)]
     edge_indices = [set([]) for i in xrange(v)]
     anv = 0
@@ -411,7 +267,7 @@ def get_k_ring_subgraphs(g, k, min_neighbor):
         vtx_indices[i].add(i)
         prev_ring = set([i])
         cur_ring = 0
-        while cur_ring < k or len(vtx_indices) < min_neighbor:
+        while cur_ring < k or len(vtx_indices[i]) < min_neighbor:
             cur_ring = cur_ring + 1
             new_ring = set([])
             for w in prev_ring:
@@ -437,23 +293,32 @@ def get_k_ring_subgraphs(g, k, min_neighbor):
     return vtx_indices, edge_indices
 
 def estimate_sub_stress_space_from_subgraphs(L_rhos, dim_T, g, vtx_indices, edge_indices):
-    v, d, e = v_d_e_from_graph(g)
+    v, e = g.v, g.e
 
     print_info("Computing stress space for each subgraph")
     sub_S_basis = []
     n = 0
     nz = 0
+    missing_stress = []
     for i in xrange(v):
+
         if EXACT_LOCAL_STRESS:
-            sub_S_basis.append(calculate_exact_sub_stress_space(g, edge_indices[i], vtx_indices[i])[0])
+            result = calculate_exact_sub_stress_space(g, edge_indices[i], vtx_indices[i])
         else:
-            sub_S_basis.append(estimate_sub_stress_space(L_rhos, g, edge_indices[i], vtx_indices[i])[0])
+            result = estimate_sub_stress_space(L_rhos, g, edge_indices[i], vtx_indices[i])
+
+        sub_S_basis.append(result[0])
+        missing_stress.append(result[2])
         
         n = n + sub_S_basis[i].shape[1]
         nz = nz + sub_S_basis[i].shape[0] * sub_S_basis[i].shape[1]
         sys.stdout.write('.')
         sys.stdout.flush()
     sys.stdout.write('\n')
+
+    missing_stress = array(missing_stress, 'd')
+    print_info("Local stress space lost dim:\n\tavg = %f\n\tmax = %f" % (
+        mean(missing_stress), max(missing_stress)))
 
     return sub_S_basis, (e, n, nz, edge_indices)
 
@@ -466,7 +331,7 @@ def consolidate_sub_space(dim_T, sub_basis, sparse_param):
         read_succ = False
         if CONSOLIDATE_READ_FROM_CACHE:
             try:
-                fn = "consolidate-pca-%d-%d-%d.cache" % (e, n, nz)
+                fn = "%s/consolidate-pca-%d-%d-%d.cache" % (DIR_CACHE, e, n, nz)
                 f = open(fn, "r")
                 u, s = cPickle.load(f)
                 print_info("\tRead from consolidation PCA cache %s" % fn)
@@ -477,7 +342,7 @@ def consolidate_sub_space(dim_T, sub_basis, sparse_param):
         if (not CONSOLIDATE_READ_FROM_CACHE) or (not read_succ):
             # Now write a temporary file of the big sparse matrix
             print_info("Write out %dx%d sparse matrix for external SVDing" % (e, n) )
-            f = open("input.st", "w")
+            f = open("%s/input.st" % DIR_TMP, "w")
             f.write("%d %d %d\n" % (e, n, nz))
             for k, B in enumerate(sub_basis):
                 for i in xrange(B.shape[1]):
@@ -489,10 +354,10 @@ def consolidate_sub_space(dim_T, sub_basis, sparse_param):
 
             # and use './svd' to svd factorize it
             import os
-            os.system("./svd input.st -o output -d %d " % (e-dim_T))
+            os.system("%s/svd %s/input.st -o %s/output -d %d " % (DIR_BIN, DIR_TMP, DIR_TMP, e-dim_T))
 
             print_info("Read back SVD result")
-            f = open("output-Ut", "r")      # read in columns
+            f = open("%s/output-Ut" % DIR_TMP, "r")      # read in columns
             f.readline()                        # skip first line (dimension info)
             u = zeros((e, e-dim_T), "d")
             for i in xrange(e-dim_T):           # now grab each column
@@ -501,12 +366,13 @@ def consolidate_sub_space(dim_T, sub_basis, sparse_param):
                 u[:,i] = c[:,0]
             f.close()
 
-            f = open("output-S", "r")           # read in singular values
+            f = open("%s/output-S" % DIR_TMP, "r")           # read in singular values
             f.readline()
             s = array(map(float, string.split(f.read())))
+            f.close()
 
             if CONSOLIDATE_WRITE_TO_CACHE:
-                fn = "consolidate-pca-%d-%d-%d.cache" % (e, n, nz)
+                fn = "%s/consolidate-pca-%d-%d-%d.cache" % (DIR_CACHE, e, n, nz)
                 f = open(fn, "w")
                 cPickle.dump((u, s),f)
                 f.close()
@@ -548,8 +414,7 @@ def consolidate_sub_space(dim_T, sub_basis, sparse_param):
     print_info("Top %d (%f%%) of %d stresses used" % (i+1, 100*float(i+1)/(e-dim_T), e-dim_T))
     return u[:,:i+1], s
 
-def sample_from_sub_stress_space(g, sub_S_basis, sparse_param):
-    v, d, e = v_d_e_from_graph(g)
+def sample_from_sub_stress_space(sub_S_basis, sparse_param):
     e, n, nz, edge_indices = sparse_param
 
     print_info("Sampling from sub stress spaces...")
@@ -584,12 +449,11 @@ def sample_from_stress_space(S_basis):
     
 
 def estimate_stress_kernel(g, stress_samples):
-
-    p, E = g
-    v, d, e = v_d_e_from_graph(g)
+    v, d, E = g.v, g.d, g.E
     ss_samples = stress_samples.shape[1]
     
-    n_per_matrix = d*KERNEL_SAMPLES # number of basis vectors to pick from kernel of each matrix
+    n_per_matrix = max(d, min(d*KERNEL_SAMPLES, v/5)) # number of basis vectors to pick from kernel of each matrix
+    print_info("Taking %d eigenvectors from each stress matrix" % n_per_matrix)
     stress_kernel = zeros((v, ss_samples * n_per_matrix))
 
     print_info("Computing kernel for %d stress" % ss_samples)
@@ -633,29 +497,48 @@ def estimate_stress_kernel(g, stress_samples):
     sys.stdout.write('\n')
     print_info("Calculating dominant stress kernel...")
     stress_kernel_basis, ev, whatever = svd(stress_kernel) # v by C, where C = n_per_matrix * ss_samples, dense
+
+    # Cross match TOP_STRESS_KERENL vectors with the stress samples:
+    error = zeros((ss_samples))
+    mean_error = []
+    for i in xrange(TOP_STRESS_KERNEL):
+        for j in xrange(ss_samples):
+            m = stress_matrix_from_vector(stress_samples[:,j], E, v)
+            error[j] = norm(m * stress_kernel_basis[:,i:i+1])
+        mean_error.append(mean(error))
+    print_info("Mean norm of product with stress matrix for top agg. kernel:\n\t%s" % str(mean_error))
+
     return stress_kernel_basis[:, :d], ev
 
 def calculate_relative_positions(g, L_rho, q):
-    B = optimal_linear_transform_for_l(q, g[1], L_rho)
+    B = optimal_linear_transform_for_l(q, g.E, L_rho)
     return B * q
 
-def graph_scale(g, perturb, noise_std, sampling, k, min_neighbor):
+def graph_scale(g, perturb, noise_std, sampling, k, min_neighbor, floor_plan):
+    v, p, d, e, E = g.v, g.p, g.d, g.e, g.E
 
-    print_info('Graph Scale PARAMS:\n\tv=%d\n\tnoise=%.04f\n\tperturb=%.04f\n\tsampling=%2.02f\n\tkernel_samples=%2d\n\tortho_samples=%s\n\tmult_noise=%s\n\texact_local_stress=%s\n\tstress_samples=%3d\n\tstress_sample_method=%s\n\tweight_kernel_sample=%s\n\tstress_val_perc=%d%%\n' % (
-        v_d_e_from_graph(g)[0], noise_std, perturb, sampling,
-        KERNEL_SAMPLES,
-        str(ORTHO_SAMPLES)[0],
-        str(MULT_NOISE)[0],
-        str(EXACT_LOCAL_STRESS)[0],
-        SS_SAMPLES,
-        STRESS_SAMPLE,
-        str(WEIGHT_KERNEL_SAMPLE)[0],
-        STRESS_VAL_PERC))
+    info = 'Graph scale parameters:'
+    info += '\n\tv = %d'        % v
+    info += '\n\tdimension = %d' % d
+    info += '\n\tdist threshold = %1.02f'   % PARAM_DIST_THRESHOLD
+    info += '\n\tmax neighbors = %d' % MAX_NEIGHBORS
+    info += '\n\tnoise = %.04f (= %.04fm for additive noise)'     % (noise_std, noise_std * METER_RATIO)
+    info += '\n\tperturb = %.04f = %.04fm'     % (perturb, perturb * METER_RATIO)
+    info += '\n\tsampling = %2.02f'    % sampling
+    info += '\n\tkernel samples = %02d'     % KERNEL_SAMPLES
+    info += '\n\tortho samples = %s'       % str(ORTHO_SAMPLES)[0]
+    info += '\n\tmult noise = %s'       % str(MULT_NOISE)[0]           
+    info += '\n\texact local stress = %s'       % str(EXACT_LOCAL_STRESS)[0]   
+    info += '\n\tstres space samples = %03d'     % SS_SAMPLES                   
+    info += '\n\tweight kernel samples = %s'      % str(WEIGHT_KERNEL_SAMPLE)[0] 
+    info += '\n\tstress value perc = %03d'    % STRESS_VAL_PERC              
+    info += '\n\ttop stress kernel to pick = %d'      % TOP_STRESS_KERNEL            
+    info += '\n\tstress sample method = %s'         % STRESS_SAMPLE
+    info += '\n\tfloor plan = %s'                   % FLOOR_PLAN_FN
+    print_info(info)
 
-    p, E = g
-    v, d, e = v_d_e_from_graph(g)
 
-    check_ggr(g)
+    check_gr(g)
 
     dim_T = locally_rigid_rank(v, d)
 
@@ -686,7 +569,7 @@ def graph_scale(g, perturb, noise_std, sampling, k, min_neighbor):
 
         elif STRESS_SAMPLE == 'local':
             cov_spec = zeros((1))
-            stress_samples = sample_from_sub_stress_space(g, sub_S_basis, sparse_param)
+            stress_samples = sample_from_sub_stress_space(sub_S_basis, sparse_param)
 
     K_basis, stress_spec = estimate_stress_kernel(g, stress_samples)
     
@@ -697,6 +580,11 @@ def graph_scale(g, perturb, noise_std, sampling, k, min_neighbor):
     l_approx = (optimal_rigid(T_q, p) * homogenous_vectors(T_q))[:d,:]
     af_approx = (optimal_affine(q, p) * homogenous_vectors(q))[:d,:]
 
+    ## Calculate results from trilateration
+    ## print_info("Performing trilateration for comparison:")
+    ## tri = trilaterate_graph(g.adj, sqrt(L_rho).A.ravel())
+    ## tri.p = (optimal_rigid(tri.p[:,tri.localized], p[:,tri.localized]) * homogenous_vectors(tri.p))[:d,:]
+    tri = None
 
     l = L(p, E, 0)
 
@@ -709,21 +597,31 @@ def graph_scale(g, perturb, noise_std, sampling, k, min_neighbor):
 
     l_g_error = mean_l2_error(p, l_approx)
     l_l_error = mean_l2_error(l.T, L(l_approx, E, 0).T)
+
+    #tri_g_error = mean_l2_error(p[:,tri.localized], tri.p[:,tri.localized])
+
+    #print("\t#localized vertices = %d = (%f%%).\n\tMean error = %f = %fm" %
+    #      (len(tri.localized), 100 *float(len(tri.localized))/v, tri_g_error, tri_g_error * METER_RATIO))
     
     # plot the info
-    plot_info({"noise":noise_std,
-               "perturb":perturb,
-               "sampling":sampling,
-               "samples":n_samples,
-               "l g error": l_g_error,
-               "l l error": l_l_error,
-               "af g error": af_g_error,
-               "af l error": af_l_error},
-              cov_spec = cov_spec, t = dim_T,
-              stress_spec = stress_spec, d = d,
-              p = p, approx_p = l_approx, approx_p2 = af_approx, v = v, E = E)
+    plot_info(g,
+              L_opt_p = l_approx,
+              aff_opt_p = af_approx,
+              tri = tri,
+              dim_T = dim_T,
+              cov_spec = cov_spec,
+              stress_spec = stress_spec,
+              floor_plan = floor_plan,
+              stats = {"noise":noise_std,
+                       "perturb":perturb,
+                       "sampling":sampling,
+                       "samples":n_samples,
+                       "l g error": l_g_error,
+                       "l l error": l_l_error,
+                       "af g error": af_g_error,
+                       "af l error": af_l_error})
 
-    print_info("Mean error %f" % l_g_error)
+    print_info("Mean error %f = %fm" % (l_g_error, l_g_error * METER_RATIO))
 
     return l_g_error
 
@@ -731,20 +629,33 @@ def main():
     import sys
     random.seed(0)
     k =  math.pow(2*(PARAM_D+1), 1.0/PARAM_D)/3.0
-    dist_threshold = 4*k*math.pow(PARAM_V, -1.0/PARAM_D)
+    dist_threshold = PARAM_DIST_THRESHOLD*k*math.pow(PARAM_V, -1.0/PARAM_D)
 
+    #floor_plan = FloorPlan(FLOOR_PLAN_FN)
+    floor_plan = Floorplan("%s/%s" % (DIR_DATA, FLOOR_PLAN_FN))
+
+    # hand pick spaces to use so can get ggr rooms
     g = random_graph(v = PARAM_V,
                      d = PARAM_D,
                      max_dist = dist_threshold,
                      min_dist = dist_threshold * 0.01,
                      discardNonrigid = True,
-                     max_neighbors = 10)
+                     max_neighbors = MAX_NEIGHBORS,
+                     floor_plan = floor_plan)
 
+    edgelen = sqrt(L(g.p, g.E, 0.0).A.ravel())
+    edgelen_min, edgelen_med, edgelen_max = min(edgelen), median(edgelen), max(edgelen)
+    global METER_RATIO
+    METER_RATIO = MAX_EDGE_LEN_IN_METER / edgelen_max
+    print_info("Realworld ratio: 1 unit = %fm " % METER_RATIO)
+    print_info("Edge length:\n\tmin = %f = %fm\n\tmedian = %f = %fm\n\tmax = %f = %fm" % (
+        edgelen_min, edgelen_min * METER_RATIO,
+        edgelen_med, edgelen_med * METER_RATIO,
+        edgelen_max, edgelen_max * METER_RATIO))
+    
     if MULT_NOISE:
         noise_stds = array(PARAM_NOISE_STDS, 'd')
-        m = median(sqrt(L(g[0], g[1], 0.0).A.ravel()))
-        print_info("Edge length median = %f" % m)
-        perturbs = m * array(PARAM_PERTURBS, 'd')
+        perturbs = edgelen_med * array(PARAM_PERTURBS, 'd')
     else:
         noise_stds = array(PARAM_NOISE_STDS, 'd') * dist_threshold
         perturbs = array(PARAM_PERTURBS, 'd')
@@ -756,8 +667,9 @@ def main():
                                 perturb=max(1e-4, perturb),
                                 noise_std = noise_std,
                                 sampling = sampling,
-                                k = 2,
-                                min_neighbor = 30)
+                                k = K_RING,
+                                min_neighbor = MIN_LOCAL_NBHD,
+                                floor_plan = floor_plan)
                 sys.stdout.flush()
 
 

@@ -1,0 +1,22 @@
+# use glob syntax.
+syntax: glob
+
+*.elc
+*.pyc
+*.png
+*~
+.*.swp
+data
+plot
+tmp
+cache
+build
+papers
+fig
+log
+stderr.txt
+
+
+# switch to regexp syntax.
+syntax: regexp
+

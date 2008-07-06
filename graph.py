@@ -3,65 +3,64 @@ from scipy.linalg.basic import *
 from util import *
 
 class Graph:
-    pass
+    def __init__(self, p, E):
+        self.p = p
+        self.E = E
+        self.v = p.shape[1]
+        self.d = p.shape[0]
+        self.e = len(E)
+        self._adj = None
 
-def v_d_e_from_graph(g):
-    p, E = g
-    return p.shape[1], p.shape[0], len(E)
+    def _get_adj(self):
+        if self._adj == None:
+            adj = [[] for i in xrange(self.v)]
+            for i in xrange(self.e):
+                u, w = self.E[i,0], self.E[i,1]
+                adj[u].append((i, w))
+                adj[w].append((i, u))
 
-def adjacency_list_from_edge_list(g):
-    p, E = g
-    v, d, e  = v_d_e_from_graph(g)
-    adj = [[] for i in xrange(v)]
-    for i in xrange(e):
-        adj[E[i,0]].append((i, E[i,1]))
-        adj[E[i,1]].append((i, E[i,0]))
-    for i in xrange(v):
-        adj[i].sort(key=lambda x: x[1])
-    return adj
+            for a in adj:
+                a.sort(key=lambda x: x[1])
 
-def build_edgeset(p, max_dist, min_dist, max_neighbors = None):
-    """
-    Given a d x n numpyarray p encoding n d-dim points, returns a k x
-    2 integer numpyarray encoding k edges whose two ends are distanced
-    less than max_dist apart, and each vertex has max number of
-    neighbors <= max_neighbors.
-    """
-    def inbetween (v, l0, l1):
-        return v >= l0 and v <= l1
+            self._adj = adj
 
-    print_info("Building edge set")
+        return self._adj
+    
+    adj = property(_get_adj)
+    
+        
 
-    V = xrange(p.shape[1])
+    def connected_components(self):
+        visited = - ones((self.v), 'i')
+        q = zeros((self.v), 'i')
+        cc = []
+        for i, a in enumerate(self.adj):
+            if visited[i] >= 0:
+                continue
+            cc.append(0)
+            visited[i] = c = len(cc)-1
+            p = 1
+            j = 0
+            q[0] = i
+            while j < p:
+                u = q[j]
+                j = j + 1
+                for e, w in self.adj[u]:
+                    if visited[w] < 0:
+                        visited[w] = c
+                        cc[c] = cc[c] + 1
+                        q[p] = w
+                        p = p + 1
+        return array(cc), visited
 
-    if max_neighbors == None:
-        A = array(
-            [[i,j] for i in V for j in V if i < j and
-             inbetween(norm(p[:,i] - p[:,j]), min_dist, max_dist)], 'i')
-    else:
-        E = set([])
-        for i in V:
-            t = [(norm(p[:,i] - p[:,j]), j) for j in V if i != j]
-            t = filter(lambda x: inbetween(x[0], min_dist, max_dist), t)
-            t.sort(key = lambda x: x[0])
-            for j in xrange(min(len(t), max_neighbors)):
-                E.add((min(i,t[j][1]), max(i,t[j][1])))
-        A = array(list(E), 'i')
+def subgraph(g, v_idx):
+    v_set = set(v_idx)
 
-    print_info("\t#e = %d" % A.shape[0])
-    return A
+    ridx = -ones((g.v), 'i')
+    for i, w in enumerate(v_idx):
+        ridx[w] = i
+    
+    E = [[ridx[e[0]], ridx[e[1]]]
+         for e in g.E if e[0] in v_set and e[1] in v_set]
 
-class Conf:
-    pass
-
-def dump_graph(file, g):
-    p, E = g
-    v, d, e = v_d_e_from_graph(g)
-
-    conf = Conf()
-    conf.v = v
-    conf.d = d
-    conf.E = E
-    conf.p = p
-    pickle.dump(conf, file)
-
+    return Graph(g.p[:,v_idx], array(E, 'i'))

@@ -1,3 +1,7 @@
+from numpy import *
+from scipy.linalg.basic import *
+from scipy.linalg.decomp import *
+
 def factorial(n):              
     """
     Returns n!
@@ -17,3 +21,24 @@ def print_info(s):
     import sys
     sys.stderr.write("INFO: %s\n" % s)
     sys.stderr.flush()
+
+def svd_conv(m):
+    for i in xrange(10):
+        try:
+            u, s, vh = svd(m)
+            return u, s, vh
+        except LinAlgError:
+            m = m + random.randn(m.shape[0], m.shape[1]) * 1e-20
+            
+        
+def random_p(v, d, sample_space_pred):
+    p = asmatrix(zeros((d,v), order='FORTRAN'))
+    for i in xrange(v):
+        done = 0
+        while not done:
+            q = asmatrix(random.random((d))).T
+            if sample_space_pred == None or sample_space_pred(q):
+                done = 1
+        p[:,i] = q
+    return p
+

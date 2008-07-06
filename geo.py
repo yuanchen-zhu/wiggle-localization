@@ -12,7 +12,21 @@ def translate_matrix(t):
     d = len(t)
     m = identity(d+1)
     m[:d,d] = t[:]
-    return m
+    return asmatrix(m)
+
+def scale_matrix(t):
+    """
+    Given a d-dim vector t, returns (d+1)x(d+1) matrix M such that
+    left multiplication by M on a homogenuous (d+1)-dim vector v
+    scales v by t (assuming the last coordinate of v is 1).
+    """
+    t = asarray(t).ravel()
+    d = len(t)
+    m = identity(d+1)
+    for i in xrange(d):
+        m[i,i] = t[i]
+    return asmatrix(m)
+    
 
 def homogenous_matrix(m):       
     """
@@ -90,6 +104,39 @@ def optimal_linear_transform_for_l(p, E, l):
     # find M s.t transpose(M) * M = S
     u, s, v = svd(S)
     return asmatrix(diag(sqrt(s), 0)) * asmatrix(v)
-    
 
-    
+
+def intersect2d(t, u, v, w):
+    """
+    Test if tu intersects vw. t, u, v, and w are 2x1 numpy matrix.
+    """
+    if min(t[0,0], u[0,0]) > max(v[0,0], w[0,0]):
+        return
+    if max(t[0,0], u[0,0]) < min(v[0,0], w[0,0]):
+        return
+    if min(t[1,0], u[1,0]) > max(v[1,0], w[1,0]):
+        return
+    if max(t[1,0], u[1,0]) < min(v[1,0], w[1,0]):
+        return
+
+    return (cross(w-v, t-v, axis=0) * cross(u-v, w-v, axis=0))[0] >= 0 and (cross(w-u, t-u, axis=0) * cross(t-u, v-u, axis=0))[0] >= 0
+
+def inside_poly2d(x, poly):
+    """
+    Test if point x is inside the closed polygon poly. poly is a 2xn
+    numpy matrix
+    """
+    nv = poly.shape[1]
+    outp = poly.min(axis = 1) - matrix([100,100]).T
+
+    # Test how many edges of the poly intersects outp-x
+    n = 0
+    for i in xrange(nv):
+        if intersect2d(poly[:,i], poly[:,(i+1)%nv], x, outp):
+            n = n + 1
+
+    return n % 2 > 0
+        
+        
+        
+                                       
