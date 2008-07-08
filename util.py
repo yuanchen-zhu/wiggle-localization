@@ -1,6 +1,7 @@
 from numpy import *
 from scipy.linalg.basic import *
 from scipy.linalg.decomp import *
+from settings import *
 
 def factorial(n):              
     """
@@ -29,7 +30,11 @@ def svd_conv(m):
             return u, s, vh
         except LinAlgError:
             m = m + random.randn(m.shape[0], m.shape[1]) * 1e-20
-            
+
+def matrix_rank(m, eps = EPS):
+    u, s, vh = svd(m)
+    return len(s[s > eps])
+          
         
 def random_p(v, d, sample_space_pred):
     p = asmatrix(zeros((d,v), order='FORTRAN'))

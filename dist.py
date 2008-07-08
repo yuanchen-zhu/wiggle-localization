@@ -67,8 +67,13 @@ def build_edgeset(p, max_dist, min_dist, max_neighbors = None, floor_plan = None
 
 def random_graph(v, d, max_dist, min_dist, discardNonrigid, max_neighbors, floor_plan):
     i = 0
+
+    if floor_plan == None:
+        pred = None
+    else:
+        pred = lambda p:floor_plan.inside(p)
     while 1:
-        p = random_p(v, d, lambda p:floor_plan.inside(p))
+        p = random_p(v, d, pred)
         E = build_edgeset(p, max_dist, min_dist, max_neighbors, floor_plan)
         e = len(E)
         i = i + 1
@@ -401,7 +406,10 @@ def estimate_stress_kernel(g, stress_samples):
 
     sys.stdout.write('\n')
     print_info("Calculating dominant stress kernel...")
+
+    #stress_kernel_basis, ev = stress_kernel[:,:n_per_matrix],[0]
     stress_kernel_basis, ev, whatever = svd(stress_kernel) # v by C, where C = n_per_matrix * ss_samples, dense
+    stress_kernel_basis = stress_kernel_basis[:,:g.gr.stress_kernel_dim -1]
 
     # Cross match TOP_STRESS_KERENL vectors with the stress samples:
     error = zeros((ss_samples))
@@ -417,10 +425,10 @@ def estimate_stress_kernel(g, stress_samples):
         mean_error.append(mean(error))
     print_info("Mean norm of product with stress matrix for top agg. kernel:\n\t%s" % str(mean_error))
 
-    return stress_kernel_basis[:, :g.gr.stress_kernel_dim], ev
+    return stress_kernel_basis[:, :g.gr.stress_kernel_dim - 1], ev
 
-def calculate_relative_positions(g, L_rho, q):
-    B = optimal_linear_transform_for_l(q, g.E, L_rho)
+def calculate_relative_positions(E, L_rho, q):
+    B = optimal_linear_transform_for_l(q, E, L_rho)
     return B * q
 
 def graph_scale(g, perturb, noise_std, sampling, k, min_neighbor, floor_plan):
@@ -481,13 +489,29 @@ def graph_scale(g, perturb, noise_std, sampling, k, min_neighbor, floor_plan):
             stress_samples = sample_from_sub_stress_space(sub_S_basis, sparse_param)
 
     K_basis, stress_spec = estimate_stress_kernel(g, stress_samples)
+
+    l_approx = asmatrix(zeros((g.d, g.v), 'd'))
+    af_approx = asmatrix(zeros((g.d, g.v), 'd'))
+    lcs = detect_linked_components_from_stress_kernel(g, K_basis)
+    #lcs = [range(g.v)]
+
+    for lc in lcs:
+        sub_E, sub_E_idx = g.subgraph_edges(lc)
+
+        sub_K = K_basis[lc,:]
+        
+        q = asmatrix(svd(sub_K)[0][:,:d].T)
+        #q = asmatrix(sub_K[:,:d].T)
+        print_info("Linked component: #v = %d\t#e = %d\trank = %s" % (len(lc), len(sub_E_idx), abs(svd(sub_K)[1])))
+
+        T_q = calculate_relative_positions(sub_E, L_rho[sub_E_idx], q)
+        T_q = (optimal_rigid(T_q, p[:,lc]) *
+               homogenous_vectors(T_q))[:d,:]
+        l_approx[:, lc] = T_q
+
+        af_approx[:, lc] = (optimal_affine(q, p[:,lc]) *
+                            homogenous_vectors(q))[:d,:]
     
-    q = asmatrix(K_basis[:,:d].T) # coordinate vector
-
-    T_q = calculate_relative_positions(g, L_rho, q)
-
-    l_approx = (optimal_rigid(T_q, p) * homogenous_vectors(T_q))[:d,:]
-    af_approx = (optimal_affine(q, p) * homogenous_vectors(q))[:d,:]
 
     ## Calculate results from trilateration
     ## print_info("Performing trilateration for comparison:")
@@ -540,9 +564,11 @@ def main():
     k =  math.pow(2*(PARAM_D+1), 1.0/PARAM_D)/3.0
     dist_threshold = PARAM_DIST_THRESHOLD*k*math.pow(PARAM_V, -1.0/PARAM_D)
 
-    floor_plan = Floorplan("%s/%s" % (DIR_DATA, FLOOR_PLAN_FN))
+    if FLOOR_PLAN_FN != "":
+        floor_plan = Floorplan("%s/%s" % (DIR_DATA, FLOOR_PLAN_FN))
+    else:
+        floor_plan = None
 
-    # hand pick spaces to use so can get ggr rooms
     g = random_graph(v = PARAM_V,
                      d = PARAM_D,
                      max_dist = dist_threshold,
@@ -572,7 +598,7 @@ def main():
         for perturb in perturbs * noise_std:
             for sampling in PARAM_SAMPLINGS:
                 e = graph_scale(g = g, 
-                                perturb=max(1e-4, perturb),
+                                perturb=max(1e-5, perturb),
                                 noise_std = noise_std,
                                 sampling = sampling,
                                 k = K_RING,

@@ -71,6 +71,6 @@ class GenericRigidity:
         else:
             self.type = 'G'
 
-        print_info('\ttype = %s\n\trigidity matrix rank = %d  (min = %d)\n\tstress kernel dim = %d (min = %d)'
+        print_info('\ttype = %s\n\trigidity matrix rank = %d  (max = %d)\n\tstress kernel dim = %d (min = %d)'
                    % (self.type, rigidity_rank, t, stress_kernel_dim, d + 1))
 

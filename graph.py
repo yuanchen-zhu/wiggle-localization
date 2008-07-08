@@ -28,8 +28,6 @@ class Graph:
     
     adj = property(_get_adj)
     
-        
-
     def connected_components(self):
         visited = - ones((self.v), 'i')
         q = zeros((self.v), 'i')
@@ -99,16 +97,16 @@ class Graph:
 
         print_info("\taverage #v = %d, average #e = %d" % (anv/v, ane/v))
         return vtx_indices, edge_indices
-    
 
+    def subgraph_edges(self, v_subset):
+        ridx = -ones((self.v), 'i')
+        for i, w in enumerate(v_subset):
+            ridx[w] = i
+
+        t = array([[i, ridx[e[0]], ridx[e[1]]]
+                   for i, e in enumerate(self.E)
+                   if ridx[e[0]] >= 0 and ridx[e[1]] >= 0], 'i')
+        return t[:,1:], t[:,0].ravel()
+    
 def subgraph(g, v_idx):
-    v_set = set(v_idx)
-
-    ridx = -ones((g.v), 'i')
-    for i, w in enumerate(v_idx):
-        ridx[w] = i
-    
-    E = [[ridx[e[0]], ridx[e[1]]]
-         for e in g.E if e[0] in v_set and e[1] in v_set]
-
-    return Graph(g.p[:,v_idx], array(E, 'i'))
+    return Graph(g.p[:,v_idx], g.subgraph_edges(v_idx)[0])
