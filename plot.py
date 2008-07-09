@@ -74,14 +74,14 @@ def plot_info(g, L_opt_p, aff_opt_p, tri,
                 marker = 'o',
                 zorder=99,
                 alpha=0.75)
-    scatter(x = L_opt_p[0].A.ravel(),
-            y = L_opt_p[1].A.ravel(),
-            s = point_size,
-            linewidth=(0.0),
-            c = "r",
-            marker = 'o',
-            zorder=100,
-            alpha=0.75)
+    ## scatter(x = L_opt_p[0].A.ravel(),
+    ##         y = L_opt_p[1].A.ravel(),
+    ##         s = point_size,
+    ##         linewidth=(0.0),
+    ##         c = "r",
+    ##         marker = 'o',
+    ##         zorder=100,
+    ##         alpha=0.75)
     scatter(x = p[0].A.ravel(),
             y = p[1].A.ravel(),
             s = point_size,
@@ -135,9 +135,11 @@ def plot_info(g, L_opt_p, aff_opt_p, tri,
             alpha=1,
             linewidth=line_width))
 
-    gca().add_collection(LineCollection([
-        (aff_opt_p.T[i].A.ravel(), p.T[i].A.ravel())
-        for i in xrange(v)], colors = "green", alpha=0.75, linewidth= line_width))
+    if PLOT_AFFINE_FIT:
+        gca().add_collection(LineCollection([
+            (aff_opt_p.T[i].A.ravel(), p.T[i].A.ravel())
+            for i in xrange(v)], colors = "green", alpha=0.75, linewidth= line_width))
+
     gca().add_collection(LineCollection([
         (L_opt_p.T[i].A.ravel(), p.T[i].A.ravel())
         for i in xrange(v)], colors = "red", alpha=0.75, linewidth = line_width))
@@ -156,7 +158,6 @@ def plot_info(g, L_opt_p, aff_opt_p, tri,
     fn += '-ss%03d'     % SS_SAMPLES                   
     fn += '-wks%s'      % str(WEIGHT_KERNEL_SAMPLE)[0] 
     fn += '-svp%03d'    % STRESS_VAL_PERC              
-    fn += '-tsk%d'      % TOP_STRESS_KERNEL            
     fn += '-%s'         % STRESS_SAMPLE
     fn += '-fl%s'       % FLOOR_PLAN_FN
 

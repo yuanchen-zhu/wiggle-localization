@@ -16,7 +16,7 @@ def rigidity_matrix(v, d, E):
         D[k, j*d:j*d+d] = -2.0 * diff_ij.T
     return D
 
-def L(p, E, noise_std):
+def L_map(p, E, noise_std):
     """
     p is d x n and encodes n d-dim points. E is k x 2 and encodes the
     edge set. Returns k-dim column vector containing the squared
@@ -38,7 +38,7 @@ class GenericRigidity:
         t = locally_rigid_rank(v, d)
         e = len(E)
         rigidity_rank = 0
-        stress_kernel_dim = e
+        dim_K = e
 
         for x in xrange(rigidity_iter):
             D = rigidity_matrix(v, d, E)
@@ -52,25 +52,26 @@ class GenericRigidity:
             for y in xrange(stress_iter):
                 w = stress_basis * asmatrix(random.random((e - t, 1)))
                 w /= norm(w)
+                
                 omega = stress_matrix_from_vector(w, E, v)
-                eigval, eigvec = eig(omega) # sparse
-                abs_eigval = abs(eigval)
-                stress_kernel_dim = min(stress_kernel_dim,
-                                        len(abs_eigval[abs_eigval <= eps]))
+                kern, oev = calculate_single_stress_kernel(omega)
+                if dim_K > kern.shape[1]+1:
+                    dim_K = kern.shape[1]+1
+                    self.K_basis = kern
 
-                if rigidity_rank == t and stress_kernel_dim == d + 1:
+                if rigidity_rank == t and dim_K == d + 1:
                     break
 
-        self.rigidity_matrix_rank = rigidity_rank
-        self.stress_kernel_dim = stress_kernel_dim
+        self.rigidity_rank = rigidity_rank
+        self.dim_K = dim_K
         
         if rigidity_rank != t:
             self.type = 'N'
-        elif stress_kernel_dim != d + 1:
+        elif dim_K != d + 1:
             self.type = 'L'
         else:
             self.type = 'G'
 
         print_info('\ttype = %s\n\trigidity matrix rank = %d  (max = %d)\n\tstress kernel dim = %d (min = %d)'
-                   % (self.type, rigidity_rank, t, stress_kernel_dim, d + 1))
+                   % (self.type, rigidity_rank, t, dim_K, d + 1))
 
