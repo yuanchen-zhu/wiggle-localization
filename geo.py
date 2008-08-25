@@ -1,6 +1,7 @@
 from numpy import *
 from scipy.linalg.basic import *
 from scipy.linalg.decomp import *
+from util import *
 
 def translate_matrix(t):
     """
@@ -54,7 +55,7 @@ def optimal_affine(p, q):
     q_star = q.mean(axis=1)
     pp = p - p_star
     qq = q - q_star
-    M = (qq * pp.T) * inv(pp * pp.T)
+    M = (qq * pp.T) * pinv(pp * pp.T)
     return translate_matrix(q_star) * homogenous_matrix(M) * translate_matrix(-p_star)
 
 def optimal_rigid(p, q):
@@ -66,14 +67,7 @@ def optimal_rigid(p, q):
     M = asmatrix(U) * asmatrix(V)
     return translate_matrix(q_star) * homogenous_matrix(M) * translate_matrix(-p_star)
 
-def optimal_linear_transform_for_l(p, E, l):
-    """
-    E is an edge set (set of pairs) and l assigns a real number to
-    each edge in E. This function finds the optimal linear
-    transformation M such that the sum over {i,j} in E of the squared
-    difference between l({i,j}) and the squared length of the
-    difference between the i-th and j-th column of Mp"""
-    
+def optimal_linear_transform_for_l_lsq(p, d, E, l):
     d, v = p.shape
     n = d * (d+1)/2
     A = zeros((E.shape[0], n), 'd')
@@ -104,6 +98,118 @@ def optimal_linear_transform_for_l(p, E, l):
     # find M s.t transpose(M) * M = S
     u, s, v = svd(S)
     return asmatrix(diag(sqrt(s), 0)) * asmatrix(v)
+
+
+
+def optimal_linear_transform_for_l_sdp(p, d, E, l):
+    """
+    E is an edge set (set of pairs) and l assigns a real number to
+    each edge in E. This function finds the optimal linear
+    transformation M such that the sum over {i,j} in E of the squared
+    difference between l({i,j}) and the squared length of the
+    difference between the i-th and j-th column of Mp"""
+
+    k, v = p.shape
+    n = k * (k+1)/2
+    m = E.shape[0]
+    A = zeros((m, n), 'd')
+
+    diff = asarray(p[:, E[:, 0]] - p[:, E[:, 1]]).T
+    i = 0
+    for r in xrange(k):
+        for c in xrange(r + 1):
+            if r == c:
+                A[:, i] = diff[:, r] * diff[:, r]
+            else:
+                A[:, i] = 2 * diff[:, r] * diff[:, c]
+            i = i + 1
+
+    # Minimize ||A x - l|| subjec to constraint symmatrix(x) is
+    # semi-positive definite. This is equivalent to the following
+    # semi-definite optimization:
+    #
+    # Minimize t
+    # Subject to constraint
+    #  (1) t >= |A x - l|^2
+    #  (2) symmatrix(x) semi-pos definite
+    #
+    # Constraint (1):
+    #   <=> (Ax-l)^T (Ax-l) - t <= 0
+    #   <=> | I         Ax-l|  >= 0
+    #       | (Ax-l)^T  t   |
+    #
+    # Constraint (2):
+    #  <=> unpack x into a symmetric matrix S and S >= 0
+
+    import cvxopt.coneprog;
+    from cvxopt.base import matrix, spmatrix
+    from cvxopt import solvers
+    cvxopt.coneprog.options['DSDP_Monitor'] = 10
+    cvxopt.coneprog.options['DSDP_GapTolerance'] = 1e-5
+    cvxopt.coneprog.options['DSDP_MaxIts'] = 200
+    
+    rs, cs, vs = [], [], []
+    for i in xrange(n):
+        r = range(m) + [m] * m
+        c = [m] * m + range(m)
+        v = list(A[:,i].ravel())
+        v = v + v
+        for j in xrange(m*2):
+            cs.append(i)
+            rs.append(c[j] * (m+1) + r[j])
+            vs.append(-v[j])
+    cs.append(n)
+    rs.append(m*(m+1)+m)
+    vs.append(-1.0)
+    G0 = spmatrix(vs, rs, cs, ((m+1)*(m+1), n+1))
+
+    r = range(m) + range(m) + [m]*m
+    c = range(m) + [m]*m + range(m)
+    v = [1.0]*m + list(-l.A.ravel()) + list(-l.A.ravel())
+    h0 = matrix(spmatrix(v, r, c, (m+1,m+1)))
+
+    rs, cs, vs = [], [], []
+    i = 0
+    for r in xrange(k):
+        for c in xrange(r + 1):
+            if r == c:
+                vs.append(-1.0)
+                rs.append(c * k + r)
+                cs.append(i)
+            else:
+                vs.extend([-1.0, -1.0])
+                rs.extend([c *k + r, r *k + c])
+                cs.extend([i, i])
+            i = i + 1
+    G1 = spmatrix(vs, rs, cs, (k*k, n+1))
+
+    # Use (I * EPS) because the DSDP solver seems to enforce strict
+    # inequality constraints, i.e., S < 0 instead of S <= 0.
+    h1 = matrix(spmatrix([EPS]*k,range(k),range(k),(k,k)))
+
+    c = matrix([[0.0]*n + [1.0]])
+    
+    if SDP_USE_DSDP:
+        sol = solvers.sdp(c, Gs=[G0,G1], hs=[h0,h1], solver="dsdp")
+    else:
+        sol = solvers.sdp(c, Gs=[G0,G1], hs=[h0,h1])
+    
+    x = sol['x']
+
+    S = zeros((k, k))
+    i = 0
+    for r in xrange(k):
+        for c in xrange(r + 1):
+            if r == c:
+                S[r, c] = x[i]
+            else:
+                S[r, c] = S[c, r] = x[i]
+            i = i + 1
+
+    # find M s.t transpose(M) * M = S
+    e, v = eig(S)
+    e, v = e.real, v. real
+    return asmatrix(dot(diag(sqrt(e[:d])), v.T[:d,:]))
 
 
 def intersect2d(t, u, v, w):

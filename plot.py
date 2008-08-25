@@ -5,7 +5,7 @@ from settings import *
 from util import *
 
 def plot_info(g, L_opt_p, aff_opt_p, tri,
-              dim_T, cov_spec, stress_spec, floor_plan, stats):
+              dim_T, tang_var, stress_spec, floor_plan, stats):
 
     d, v, p, E  = g.d, g.v, g.p, g.E
 
@@ -34,27 +34,30 @@ def plot_info(g, L_opt_p, aff_opt_p, tri,
             ha = "right", va = "top", color = "red")
     
     
-    #Graph the spectral distribution of the covariance matrix
+    #Graph the variance of tangent space samples projected to the orthonormal directions.
     axes([margin, margin, width-margin*2, height-margin*2])
-    #semilogx()
-    plot(xrange(1, 1+len(cov_spec)),cov_spec)
-    axvline(E.shape[0]-dim_T+1)
+    #loglog()
+    semilogy()
+    plot(xrange(1, 1+len(tang_var)),tang_var)
+    axvline(dim_T)
 
-    axhline(median(cov_spec)*STRESS_VAL_PERC/100)
+    axhline(median(tang_var)*STRESS_VAL_PERC/100)
     
-    #axvline(len(cov_spec)*STRESS_PERC/100)
+    #axvline(len(tang_var)*STRESS_PERC/100)
     
     #axis([1, min(dim_T*16, len(E))+1, 1e-4, 1e1])
     gca().set_aspect('auto')
-    title("Cov. Spec.")
+    title("Tang. Var.")
 
     #Graph the spectral distribution of the stress matrix
     axes([margin, height+margin, width-margin*2, height-margin*2])
-    #loglog()
-    semilogx()
+    if g.gr.dim_K > g.v/10:
+        semilogy()
+    else:
+        loglog()
+
     plot(xrange(1, 1 + len(stress_spec)), stress_spec)
-    axvline(d)
-    axvline(d+1)
+    axvline(g.gr.dim_K)
     #axis([1, 1+len(stress_spec), 1e-2, 1e2 ])
     gca().set_aspect('auto')
     title("Agg. Stress Kern. Spec.")
@@ -147,7 +150,7 @@ def plot_info(g, L_opt_p, aff_opt_p, tri,
     fn = '%s/plot' % DIR_PLOT
     fn += '-v%d'        % v
     fn += '-dt%1.02f'   % PARAM_DIST_THRESHOLD
-    fn += '-mn%02d'     % MAX_NEIGHBORS
+    fn += '-mn%02d'     % MAX_DEGREE
     fn += '-n%.04f'     % stats["noise"]
     fn += '-p%.04f'     % stats["perturb"]
     fn += '-s%2.02f'    % stats["sampling"]
@@ -160,6 +163,9 @@ def plot_info(g, L_opt_p, aff_opt_p, tri,
     fn += '-svp%03d'    % STRESS_VAL_PERC              
     fn += '-%s'         % STRESS_SAMPLE
     fn += '-fl%s'       % FLOOR_PLAN_FN
+    fn += '-plkp%s'     % str(PER_LC_KS_PCA)[0]
+    fn += '-sdps%d'     % SDP_SAMPLE
+    fn += '-dsdp%s'     % str(SDP_USE_DSDP)[0]
 
     import os
     savefig("%s.eps" % fn)

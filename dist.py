@@ -2,6 +2,9 @@
 import scipy.stats
 import cPickle
 
+import sys
+sys.path = ['/usr/lib/python%s/site-packages/oldxml' % sys.version[:3]] + sys.path # hardy annoyance
+
 from settings import *
 from geo import *
 from util import *
@@ -11,7 +14,8 @@ from plot import *
 from genrig import *
 from stress import *
 from numpy import *
-#from floorplan import *
+import string
+
 from mitquest import Floorplan
 from scipy.linalg.basic import *
 from scipy.linalg.decomp import *
@@ -23,125 +27,85 @@ class TooFewSamples(Exception):
     pass
     
 
-def build_edgeset(p, max_dist, min_dist, max_neighbors = None, floor_plan = None):
+def build_edgeset(p, max_dist, min_dist, max_degree, pred):
     """
     Given a d x n numpyarray p encoding n d-dim points, returns a k x
     2 integer numpyarray encoding k edges whose two ends are distanced
-    less than max_dist apart, and each vertex has max number of
-    neighbors <= max_neighbors.
+    less than max_dist apart, and each vertex has degree <= max_degree.
     """
     def inbetween (v, l0, l1):
         return v >= l0 and v <= l1
 
     print_info("Building edge set")
-
     V = xrange(p.shape[1])
+    E = set([])
+    for i in V:
+        t = [(norm(p[:,i] - p[:,j]), j) for j in V if i != j]
+        t.sort(key = lambda x: x[0])
 
-    if max_neighbors == None:
-        A = array(
-            [[i,j] for i in V for j in V if i < j and
-             inbetween(norm(p[:,i] - p[:,j]), min_dist, max_dist) and
-             (floor_plan == None or
-              not floor_plan.intersect(p[:,i], p[:,j]))], 'i')
-    else:
-        E = set([])
-        for i in V:
-            t = [(norm(p[:,i] - p[:,j]), j)
-                 for j in V if i != j]
-            t.sort(key = lambda x: x[0])
-            t = filter(lambda x: inbetween(x[0], min_dist, max_dist), t)
+        n = 0
+        for j,(d,k) in enumerate(t):
+            if inbetween(d, min_dist, max_dist) and pred(p[:,i], p[:,k]):
+                E.add((min(i, k), max(i, k)))
+                n = n + 1
+            if n >= max_degree:
+                break
 
-            j = k = 0
-            while j < len(t) and k < max_neighbors:
-                if inbetween(t[j][0], min_dist, max_dist) and (
-                    floor_plan == None or not floor_plan.intersect(p[:,i], p[:,t[j][1]])):
-                    E.add((min(i, t[j][1]), max(i,t[j][1])))
-                    k = k + 1
-                j = j + 1
-              
-        A = array(list(E), 'i')
-
-    print_info("\t#e = %d" % A.shape[0])
-    return A
+    print_info("\t#e = %d" % len(E))
+    return array(list(E), 'i')
 
 
-def random_graph(v, d, max_dist, min_dist, discard_nonrigid, max_neighbors, floor_plan):
-    if floor_plan == None:
-        pred = None
-    else:
-        pred = lambda p:floor_plan.inside(p)
+def random_graph(v, d, max_dist, min_dist, max_degree, vpred, epred):
+    print_info("Create random graph...")
+    param_hash = hash((v, d, max_dist, min_dist, max_degree, FLOOR_PLAN_FN, FILTER_DANGLING))
+    cache_fn = "%s/graph-%d.cache" % (DIR_CACHE, param_hash)
+    g = None
 
-    cache_fn = "%s/graph-%d-%d-%g-%g-%d.cache" % (DIR_CACHE, v, d, max_dist, min_dist, max_neighbors)
     try:
         f = open(cache_fn, "r")
         g = cPickle.load(f)
         print_info("\tRead from graph cache %s" % cache_fn)
-        return g
+        f.close()
     except IOError:
         print_info("\tError reading from graph cache %s. Generating graph " % cache_fn)
-    
-    i = 0
-    while 1:
-        p = random_p(v, d, pred)
-        E = build_edgeset(p, max_dist, min_dist, max_neighbors, floor_plan)
-        e = len(E)
-        i = i + 1
+
+    if g == None:
+        p = random_p(v, d, vpred)
+        E = build_edgeset(p, max_dist, min_dist, max_degree, epred)
         g = Graph(p, E)
-
-        if discard_nonrigid:
-            def filter_dangling_v(g):
-                while 1:
-                    ov = g.v
-                    adj = g.adj
-                    g = subgraph(g, [i for i in xrange(g.v) if len(adj[i]) > d])
-                    if g.v == ov:
-                        break
-                return g
-
-            def filter_dangling_c(g):
-                cc, cn = g.connected_components()
-                if len(cc) == 1:
-                    return g
-                c = argmax(cc)
-                return subgraph(g, [i for i in xrange(g.v) if cn[i] == c])
-
-            print_info("|V|=%d |E|=%d" % (g.v, g.e))
+        print_info("|V|=%d |E|=%d" % (g.v, g.e))
+        if FILTER_DANGLING:
             print_info("Filtering dangling vertices and components...")
             while 1:
                 oldv = g.v
                 g = filter_dangling_v(g)
-                g = filter_dangling_c(g)
+                g = largest_cc(g)
                 if oldv == g.v:
                     print_info("Done! |V|=%d |E|=%d" % (g.v, g.e))
                     break
                 print_info("\t|V|=%d |E|=%d" % (g.v, g.e))
-            
-            gr = GenericRigidity(g.v, g.d, g.E)
-            if gr.type == 'N':
-                print_info("Not generically locally rigid")
-                continue
-            g.gr = gr
 
-            print_info("Graph created after %d tries" % i)
+        g.gr = GenericRigidity(g.v, g.d, g.E)
 
         f = open(cache_fn, "w")
         cPickle.dump(g, f)
         f.close()
         print_info("\tWrite to graph cache %s" % cache_fn)
 
-        return g
-
-def check_gr(g):
-    if not 'gr' in g.__dict__ or g.gr.type == 'N':
-        raise NotLocallyRigid()
+    print_info("\t|V|=%d |E|=%d" % (g.v, g.e))
+    print_info('\ttype = %s\n\trigidity matrix rank = %d  (max = %d)\n\tstress kernel dim = %d (min = %d)'
+               % (g.gr.type, g.gr.dim_T, locally_rigid_rank(g.v, d), g.gr.dim_K, d + 1))
+    return g
 
 def measure_L(g, perturb, noise_std, n_samples):
     print_info("#measurements = %d" % n_samples)
 
     Ls = asmatrix(zeros((g.e, n_samples), 'd'))
     for i in xrange(n_samples):
-        delta = asmatrix(random.random((g.d, g.v))) - 0.5
-        delta *= (perturb*2)
+        delta = asmatrix(random.uniform(-perturb, perturb, (g.d, g.v)))
+        #for i in xrange(g.v):
+        #    delta[:,i] /= norm(delta[:,i])
+        #delta *= perturb
         Ls[:,i] = L_map(g.p + delta, g.E, noise_std)
 
     return Ls, L_map(g.p, g.E, noise_std)
@@ -355,7 +319,7 @@ def sample_from_sub_stress_space(sub_S_basis, sparse_param):
             stress_samples[edge_indices[j],i:i+1] += w
 
     if ORTHO_SAMPLES:
-        stress_samples = svd(stress_samples)[0]
+        stress_samples = svd(stress_samples)[0][:,:stress_samples.shape[1]]
 
     return stress_samples[:,:SS_SAMPLES]            
             
@@ -368,16 +332,13 @@ def sample_from_stress_space(S_basis):
     stress_samples = asmatrix(S_basis) * asmatrix(random.random((n_S, SS_SAMPLES+SS_SAMPLES/2)))
 
     # Else take the last ss_samples stress vectors in S_basis
-    #stress_samples = S_basis[n_S-ss_samples:]
+    #stress_samples = S_basis[:,n_S-SS_SAMPLES:]
 
     if ORTHO_SAMPLES:
-        stress_samples = svd(stress_samples)[0]
+        stress_samples = svd(stress_samples)[0][:,:stress_samples.shape[1]]
 
     return stress_samples[:,:SS_SAMPLES]
-
-def calculate_relative_positions(E, L, q):
-    B = optimal_linear_transform_for_l(q, E, L)
-    return B * q
+    #return S_basis
 
 def graph_scale(g, perturb, noise_std, sampling, k, min_neighbor, floor_plan):
     v, p, d, e, E = g.v, g.p, g.d, g.e, g.E
@@ -386,32 +347,33 @@ def graph_scale(g, perturb, noise_std, sampling, k, min_neighbor, floor_plan):
     info += '\n\tv = %d'        % v
     info += '\n\tdimension = %d' % d
     info += '\n\tdist threshold = %1.02f'   % PARAM_DIST_THRESHOLD
-    info += '\n\tmax neighbors = %d' % MAX_NEIGHBORS
+    info += '\n\tmax neighbors = %d' % MAX_DEGREE
     info += '\n\tnoise = %.04f (= %.04fm for additive noise)'     % (noise_std, noise_std * METER_RATIO)
     info += '\n\tperturb = %.04f = %.04fm'     % (perturb, perturb * METER_RATIO)
     info += '\n\tsampling = %2.02f'    % sampling
-    info += '\n\tkernel samples = %02d'     % KERNEL_SAMPLES
+    info += '\n\tkernel samples = %d'     % KERNEL_SAMPLES
     info += '\n\tortho samples = %s'       % str(ORTHO_SAMPLES)[0]
     info += '\n\tmult noise = %s'       % str(MULT_NOISE)[0]           
     info += '\n\texact local stress = %s'       % str(EXACT_LOCAL_STRESS)[0]   
-    info += '\n\tstres space samples = %03d'     % SS_SAMPLES                   
+    info += '\n\tstress space samples = %d'     % SS_SAMPLES                   
     info += '\n\tweight kernel samples = %s'      % str(WEIGHT_KERNEL_SAMPLE)[0] 
-    info += '\n\tstress value perc = %03d'    % STRESS_VAL_PERC              
+    info += '\n\tstress value perc = %d%%'    % STRESS_VAL_PERC              
     info += '\n\tstress sample method = %s'         % STRESS_SAMPLE
     info += '\n\tfloor plan = %s'                   % FLOOR_PLAN_FN
+    info += '\n\tpca stress kernel per linked comp. = %s' % str(PER_LC_KS_PCA)[0]
+    info += '\n\tSDP sample = %d' % SDP_SAMPLE
+    info += '\n\tSDP use DSDP = %s' % str(SDP_USE_DSDP)[0]
     print_info(info)
 
 
-    check_gr(g)
-
-    dim_T = locally_rigid_rank(v, d)
+    dim_T = g.gr.dim_T
 
     if STRESS_SAMPLE == 'global':
         n_samples = int(dim_T * sampling)
 
         Ls, L = measure_L(g, perturb, noise_std, n_samples)
 
-        S_basis, cov_spec = estimate_stress_space(Ls, dim_T)
+        S_basis, tang_var = estimate_stress_space(Ls, dim_T)
         stress_samples = sample_from_stress_space(S_basis)
         
     else:
@@ -428,11 +390,11 @@ def graph_scale(g, perturb, noise_std, sampling, k, min_neighbor, floor_plan):
             edge_indices = edge_indices)
 
         if STRESS_SAMPLE == 'semilocal':
-            S_basis, cov_spec = consolidate_sub_space(dim_T, sub_S_basis, sparse_param)
+            S_basis, tang_var = consolidate_sub_space(dim_T, sub_S_basis, sparse_param)
             stress_samples = sample_from_stress_space(S_basis)
 
         elif STRESS_SAMPLE == 'local':
-            cov_spec = zeros((1))
+            tang_var = zeros((1))
             stress_samples = sample_from_sub_stress_space(sub_S_basis, sparse_param)
 
     K_basis, stress_spec = sample_stress_kernel(g, stress_samples)
@@ -440,26 +402,53 @@ def graph_scale(g, perturb, noise_std, sampling, k, min_neighbor, floor_plan):
     l_approx = asmatrix(zeros((g.d, g.v), 'd'))
     af_approx = asmatrix(zeros((g.d, g.v), 'd'))
 
+
     lcs = detect_linked_components_from_stress_kernel(g, g.gr.K_basis)
 
     print_info("Optimizing and fitting each linked components:")
     for lc in lcs:
         sub_E, sub_E_idx = g.subgraph_edges(lc)
-        sub_K = K_basis[lc,:]
+        sub_K, s, vh = svd(K_basis[lc,:])
 
-        u, s, vh = svd(sub_K)
+        if SS_SAMPLES == 1:
+            q = asmatrix(K_basis)[lc, :int(g.d * SDP_SAMPLE)].T
+        else:
+            q = asmatrix(sub_K)[:, :int(g.d * SDP_SAMPLE)].T
+            if PER_LC_KS_PCA:
+                stress_spec = s
         
-        q = asmatrix(u[:,:d].T)
-        print_info("\t#v = %d #e = %d\tcondition number = %s" %
-                   (len(lc), len(sub_E_idx), s[d-1]/s[d]))
+        if len(s) > d:
+            cond = s[d-1]/s[d]
+        else:
+            cond = 1e200
 
-        T_q = calculate_relative_positions(sub_E, L[sub_E_idx], q)
-        T_q = (optimal_rigid(T_q, p[:,lc]) *
-               homogenous_vectors(T_q))[:d,:]
+        #q = asmatrix(q)[2:3,:]
+        if q.shape[0] < g.d:
+            q = vstack((q, zeros((g.d-q.shape[0], q.shape[1]))))
+        print_info("\tv=%d\te=%d\tcond. no.=%g\tev=%s\tq.shape=%s" %
+                   (len(lc),
+                    len(sub_E_idx),
+                    cond,
+                    str(s[:min(len(s),d+1)]),
+                    str(q.shape)))
+
+        print_info("Performing SDP to recover configuration from %d coordinate vectors..." % q.shape[0])
+
+        if SDP_SAMPLE == 0:
+            T = optimal_linear_transform_for_l_lsq(q, d, sub_E, L[sub_E_idx])
+        else:
+            T = optimal_linear_transform_for_l_sdp(q, d, sub_E, L[sub_E_idx])
+        T_q = T * q
+        R = optimal_rigid(T_q, p[:,lc])
+        T_q = (R * homogenous_vectors(T_q))[:d,:]
         l_approx[:, lc] = T_q
 
-        af_approx[:, lc] = (optimal_affine(q, p[:,lc]) *
-                            homogenous_vectors(q))[:d,:]
+        af_approx[:,lc] = T_q
+        
+        #tr = optimal_affine(q, p[:,lc])
+        #af_approx[:, lc] = (tr *
+        #                    homogenous_vectors(q))[:d,:]
+        
     
 
     ## Calculate results from trilateration
@@ -491,8 +480,8 @@ def graph_scale(g, perturb, noise_std, sampling, k, min_neighbor, floor_plan):
               aff_opt_p = af_approx,
               tri = tri,
               dim_T = dim_T,
-              cov_spec = cov_spec,
-              stress_spec = stress_spec,
+              tang_var = sqrt(tang_var),
+              stress_spec = sqrt(stress_spec),
               floor_plan = floor_plan,
               stats = {"noise":noise_std,
                        "perturb":perturb,
@@ -513,18 +502,30 @@ def main():
     k =  math.pow(2*(PARAM_D+1), 1.0/PARAM_D)/3.0
     dist_threshold = PARAM_DIST_THRESHOLD*k*math.pow(PARAM_V, -1.0/PARAM_D)
 
-    if FLOOR_PLAN_FN != "":
+    if FLOOR_PLAN_FN:
         floor_plan = Floorplan("%s/%s" % (DIR_DATA, FLOOR_PLAN_FN))
+        vpred = lambda p: floor_plan.inside(p)
+        epred = lambda p, q: not floor_plan.intersect(p, q)
     else:
         floor_plan = None
+        vpred = lambda p: 1
+        epred = lambda p, q: 1
 
     g = random_graph(v = PARAM_V,
                      d = PARAM_D,
                      max_dist = dist_threshold,
-                     min_dist = dist_threshold * 0.01,
-                     discard_nonrigid = True,
-                     max_neighbors = MAX_NEIGHBORS,
-                     floor_plan = floor_plan)
+                     min_dist = dist_threshold * 0.05,
+                     max_degree = MAX_DEGREE,
+                     vpred = vpred,
+                     epred = epred)
+
+    #g = largest_cc(g)
+    #g.gr = GenericRigidity(g.v, g.d, g.E)
+
+    if SINGLE_LC:
+        lcs = detect_linked_components_from_stress_kernel(g, g.gr.K_basis)
+        g = subgraph(g, lcs[0])
+        g.gr = GenericRigidity(g.v, g.d, g.E)
 
     edgelen = sqrt(L_map(g.p, g.E, 0.0).A.ravel())
     edgelen_min, edgelen_med, edgelen_max = min(edgelen), median(edgelen), max(edgelen)
@@ -537,23 +538,20 @@ def main():
         edgelen_max, edgelen_max * METER_RATIO))
     
     if MULT_NOISE:
-        noise_stds = array(PARAM_NOISE_STDS, 'd')
-        perturbs = edgelen_med * array(PARAM_PERTURBS, 'd')
+        noise_std = PARAM_NOISE_STD
+        perturb = edgelen_med * PARAM_PERTURB * noise_std
     else:
-        noise_stds = array(PARAM_NOISE_STDS, 'd') * dist_threshold
-        perturbs = array(PARAM_PERTURBS, 'd')
+        noise_std = PARAM_NOISE_STD * dist_threshold
+        perturb = PARAM_PERTURB * noise_std
 
-    for noise_std in noise_stds:
-        for perturb in perturbs * noise_std:
-            for sampling in PARAM_SAMPLINGS:
-                e = graph_scale(g = g, 
-                                perturb=max(PARAM_MIN_PERTURB, perturb),
-                                noise_std = noise_std,
-                                sampling = sampling,
-                                k = K_RING,
-                                min_neighbor = MIN_LOCAL_NBHD,
-                                floor_plan = floor_plan)
-                sys.stdout.flush()
+    e = graph_scale(g = g, 
+                    perturb=max(PARAM_MIN_PERTURB, perturb),
+                    noise_std = noise_std,
+                    sampling = PARAM_SAMPLINGS,
+                    k = K_RING,
+                    min_neighbor = MIN_LOCAL_NBHD,
+                    floor_plan = floor_plan)
+    sys.stdout.flush()
 
 
 if __name__ == "__main__":

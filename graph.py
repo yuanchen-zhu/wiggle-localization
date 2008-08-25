@@ -29,6 +29,12 @@ class Graph:
     adj = property(_get_adj)
     
     def connected_components(self):
+        """ Return connected components of the graph.
+
+        Return (sizes, cc_index) where sizes[i] is the size of the
+        i-th connected component. Vertex v belongs to the
+        cc_index[v]-th connected component.
+        """
         visited = - ones((self.v), 'i')
         q = zeros((self.v), 'i')
         cc = []
@@ -106,7 +112,29 @@ class Graph:
         t = array([[i, ridx[e[0]], ridx[e[1]]]
                    for i, e in enumerate(self.E)
                    if ridx[e[0]] >= 0 and ridx[e[1]] >= 0], 'i')
+
+        if len(t) == 0:
+            return zeros((0,2),'i'), zeros((0,),'i')
         return t[:,1:], t[:,0].ravel()
     
 def subgraph(g, v_idx):
     return Graph(g.p[:,v_idx], g.subgraph_edges(v_idx)[0])
+
+
+def largest_cc(g):
+    print_info("Get largest connected component.")
+    cc, cn = g.connected_components()
+    if len(cc) == 1:
+        return g
+    c = argmax(cc)
+    return subgraph(g, [i for i in xrange(g.v) if cn[i] == c])
+
+def filter_dangling_v(g):
+    while 1:
+        ov = g.v
+        adj = g.adj
+        g = subgraph(g, [i for i in xrange(g.v) if len(adj[i]) > g.d])
+        if g.v == ov:
+            break
+    return g
+

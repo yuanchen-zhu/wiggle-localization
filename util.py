@@ -47,3 +47,7 @@ def random_p(v, d, sample_space_pred):
         p[:,i] = q
     return p
 
+def get_module_consts(mod):
+    return [(n, mod.__getattribute__(n)) for n in dir(mod) if n.isupper()]
+
+    
