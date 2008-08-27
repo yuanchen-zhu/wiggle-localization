@@ -15,35 +15,21 @@ def stress_matrix_from_vector(w, E, v):
     return O
 
 
-vec_1_op = None
-
 def calculate_single_stress_kernel(omega, kern_dim_minus_one = None, eps = EPS):
-    global vec_1_op
     v = omega.shape[0]
-    if vec_1_op == None or vec_1_op.shape[0] != v or vec_1_op.shape[1] != v:
-        vec_1_op = asmatrix(ones((v, v), 'd') / float(v))
     
-    # The following uses dense matrix routines
-    if SK_USE_SVD:
-        u, s, vh = svd(omega)
-        if kern_dim_minus_one == None:
-            kern_dim_minus_one = len(s[s < eps]) - 1
-        kd = kern_dim_minus_one + 1
-        return asmatrix(vh).T[:,v-kd:v-1], s
-    else:
-        eigval, eigvec = eig(omega)     # v by v, sparse, 2vd non-zero entries
-        eigval = abs(eigval)
+    eigval, eigvec = eig(omega)     # v by v, sparse, 2vd non-zero entries
+    eigval = abs(eigval)
 
-        order =  range(v)
-        order.sort(key = lambda i: eigval[i])
+    order =  range(v)
+    order.sort(key = lambda i: eigval[i])
 
-        if kern_dim_minus_one == None:
-            kern_dim_minus_one = len(eigval[eigval < eps]) - 1
+    if kern_dim_minus_one == None:
+        kern_dim_minus_one = len(eigval[eigval < eps]) - 1
 
-        kd = kern_dim_minus_one + 1
+    kd = kern_dim_minus_one + 1
 
-        # for accuracy, remove vec_1 component
-        return eigvec[:,order[1:kd]], eigval[order[1:]]
+    return eigvec[:,order[1:kd]], eigval[order[1:]]
 
 
 def enumerate_tris(adj):
@@ -114,54 +100,10 @@ def sample_stress_kernel(g, ss):
     v, d, E = g.v, g.d, g.E
     ns = ss.shape[1]
 
-    if not PER_LC_KS_PCA:
-        S = zeros((v,v), 'd')
-        for i in xrange(ns):
-            w = ss[:,i]
-            o = asmatrix(stress_matrix_from_vector(w, E, v))
-            S += o.T * o
+    S = zeros((v,v), 'd')
+    for i in xrange(ns):
+        w = ss[:,i]
+        o = asmatrix(stress_matrix_from_vector(w, E, v))
+        S += o.T * o
 
-        k, e= calculate_single_stress_kernel(S, int((g.gr.dim_K - 1)))
-        return k, e #array([e[len(e)-1-i] for i in xrange(len(e))])
-    else:
-        nks = min(int((g.gr.dim_K - 1) * KERNEL_SAMPLES), int(KERNEL_MAX_RATIO * v))
-        print_info("Taking %d eigenvectors from each stress matrix" % nks)
-
-        F = 1
-        ks = asmatrix(zeros((v, ns * nks * F)))
-        print_info("Computing kernel for %d stress" % ns)
-
-        for i in xrange(ns):
-            w = ss[:, i]
-            o = stress_matrix_from_vector(w, E, v)
-            kern, oev = calculate_single_stress_kernel(o, nks)
-
-            k = i * nks * F
-            if F == 1:
-                a = range(kern.shape[1])
-                a.reverse()
-                ks[:, k:k+nks] = kern[:, a]
-                if WEIGHT_KERNEL_SAMPLE:
-                    ks[:, k: k+nks*F] *= -log(oev[:nks])
-            else:
-                rc = asmatrix(random.random((kern.shape[1], nks * F)))
-                for j in xrange(rc.shape[1]):
-                    rc[:,j] /= norm(rc[:,j])
-                ks[:, k:k+nks * F] = asmatrix(kern) * rc
-
-            sys.stdout.write('.')
-            sys.stdout.flush()
-
-        sys.stdout.write('\n')
-        print_info("Calculating dominant stress kernel...")
-
-        if PER_LC_KS_PCA:
-            return ks, [0]
-        else:
-            if ns == 1:
-                K_basis, ev = ks, oev
-            else:
-                K_basis, ev, whatever = svd(ks) # v by C, where C = nks * ns, dense
-
-            return K_basis[:,:int((g.gr.dim_K - 1) * SDP_SAMPLE)], ev
-
+    return calculate_single_stress_kernel(S, max(int(g.d * SDP_SAMPLE), g.gr.dim_K - 1))

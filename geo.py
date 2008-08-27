@@ -206,10 +206,14 @@ def optimal_linear_transform_for_l_sdp(p, d, E, l):
                 S[r, c] = S[c, r] = x[i]
             i = i + 1
 
-    # find M s.t transpose(M) * M = S
-    e, v = eig(S)
-    e, v = e.real, v. real
-    return asmatrix(dot(diag(sqrt(e[:d])), v.T[:d,:]))
+    # find M s.t transpose(M) * M = rank_restricted(S, d)
+    e, v = eig(S)                      # we have S = v * diag(e) * v.T
+    e, v = sqrt(e.real), v.real
+    order = range(k)
+    order.sort(key = lambda i: -e[i]) # e[order] is sorted in descreasing value
+    print_info("Transformation matrix eigenvalues: %s" % str(e[order]))
+    print_info("Transformation matrix id: %s" % str(order))
+    return asmatrix(dot(diag(e[order[:d]]), v.T[order[:d],:]))
 
 
 def intersect2d(t, u, v, w):

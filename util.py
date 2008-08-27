@@ -18,10 +18,51 @@ def chooses(n, r):
     """
     return factorial(n)/factorial(r)/factorial(n-r)
 
+info_buffer = []
+
 def print_info(s):
     import sys
     sys.stderr.write("INFO: %s\n" % s)
     sys.stderr.flush()
+    info_buffer.append(s)
+
+def check_info():
+    """ Check if [hash].info corresponding to the current settings
+    exist and print if it does."""
+
+    try:
+        fn = "%s/%s.info" % (DIR_PLOT, get_settings_hash())
+        f = open(fn, "rb")
+        l = f.read()
+        print "### Cached info %s present. Will skip actural run." %fn
+        print l
+        f.close()
+        return True
+    except IOError:
+        return False
+
+def flush_info():
+    """ Flush info to [hash].info where hash is hash(settings)"""
+    f = open("%s/%s.info" % (DIR_PLOT, get_settings_hash()), "wb")
+    for l in info_buffer:
+        f.write(l)
+        f.write('\n')
+    f.close()
+
+def dump_settings():
+    import settings
+    ss = get_module_consts(settings)
+    print_info("Settings: ")
+    for s in ss:
+        print_info("\t%s :  %s" % (s[0], s[1]))
+
+def get_settings_hash():
+    import settings
+    h = hash(tuple(get_module_consts(settings)))
+    if h < 0:
+        return '0'+str(-h)
+    else:
+        return str(h)
 
 def svd_conv(m):
     for i in xrange(10):

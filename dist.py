@@ -2,8 +2,9 @@
 import scipy.stats
 import cPickle
 
+# Ubuntu Hardy annoyance: the XML lib I use is deprecated
 import sys
-sys.path = ['/usr/lib/python%s/site-packages/oldxml' % sys.version[:3]] + sys.path # hardy annoyance
+sys.path = ['/usr/lib/python%s/site-packages/oldxml' % sys.version[:3]] + sys.path 
 
 from settings import *
 from geo import *
@@ -19,9 +20,6 @@ import string
 from mitquest import Floorplan
 from scipy.linalg.basic import *
 from scipy.linalg.decomp import *
-
-class NotLocallyRigid(Exception):
-    pass
 
 class TooFewSamples(Exception):
     pass
@@ -39,17 +37,21 @@ def build_edgeset(p, max_dist, min_dist, max_degree, pred):
     print_info("Building edge set")
     V = xrange(p.shape[1])
     E = set([])
+    deg = zeros(p.shape[1])
     for i in V:
         t = [(norm(p[:,i] - p[:,j]), j) for j in V if i != j]
         t.sort(key = lambda x: x[0])
 
-        n = 0
         for j,(d,k) in enumerate(t):
-            if inbetween(d, min_dist, max_dist) and pred(p[:,i], p[:,k]):
-                E.add((min(i, k), max(i, k)))
-                n = n + 1
-            if n >= max_degree:
+            if deg[i] >= max_degree:
                 break
+            
+            if inbetween(d, min_dist, max_dist) and pred(p[:,i], p[:,k]):
+                edge = (min(i, k), max(i, k))
+                if not (edge in E) and deg[i] < max_degree and deg[k] < max_degree:
+                    deg[i] = deg[i] + 1
+                    deg[k] = deg[k] + 1
+                    E.add(edge)
 
     print_info("\t#e = %d" % len(E))
     return array(list(E), 'i')
@@ -57,7 +59,7 @@ def build_edgeset(p, max_dist, min_dist, max_degree, pred):
 
 def random_graph(v, d, max_dist, min_dist, max_degree, vpred, epred):
     print_info("Create random graph...")
-    param_hash = hash((v, d, max_dist, min_dist, max_degree, FLOOR_PLAN_FN, FILTER_DANGLING))
+    param_hash = hash((v, d, max_dist, min_dist, max_degree, FLOOR_PLAN_FN, FILTER_DANGLING, SINGLE_LC))
     cache_fn = "%s/graph-%d.cache" % (DIR_CACHE, param_hash)
     g = None
 
@@ -81,18 +83,22 @@ def random_graph(v, d, max_dist, min_dist, max_degree, vpred, epred):
                 g = filter_dangling_v(g)
                 g = largest_cc(g)
                 if oldv == g.v:
-                    print_info("Done! |V|=%d |E|=%d" % (g.v, g.e))
                     break
                 print_info("\t|V|=%d |E|=%d" % (g.v, g.e))
 
         g.gr = GenericRigidity(g.v, g.d, g.E)
+
+        if SINGLE_LC:
+            lcs = detect_linked_components_from_stress_kernel(g, g.gr.K_basis)
+            g = subgraph(g, lcs[0])
+            g.gr = GenericRigidity(g.v, g.d, g.E)
 
         f = open(cache_fn, "w")
         cPickle.dump(g, f)
         f.close()
         print_info("\tWrite to graph cache %s" % cache_fn)
 
-    print_info("\t|V|=%d |E|=%d" % (g.v, g.e))
+    print_info("\t|V|=%d\n\t|E|=%d\n\tMeanDegree=%f" % (g.v, g.e, 2.0 * float(g.e)/float(g.v)))
     print_info('\ttype = %s\n\trigidity matrix rank = %d  (max = %d)\n\tstress kernel dim = %d (min = %d)'
                % (g.gr.type, g.gr.dim_T, locally_rigid_rank(g.v, d), g.gr.dim_K, d + 1))
     return g
@@ -103,17 +109,13 @@ def measure_L(g, perturb, noise_std, n_samples):
     Ls = asmatrix(zeros((g.e, n_samples), 'd'))
     for i in xrange(n_samples):
         delta = asmatrix(random.uniform(-perturb, perturb, (g.d, g.v)))
-        #for i in xrange(g.v):
-        #    delta[:,i] /= norm(delta[:,i])
-        #delta *= perturb
         Ls[:,i] = L_map(g.p + delta, g.E, noise_std)
 
-    return Ls, L_map(g.p, g.E, noise_std)
+    return Ls, L_map(g.p, g.E, noise_std), L_map(g.p, g.E, 0)
 
 def estimate_stress_space(Ls, dim_T):
     u, s, vh = svd(Ls)              # dense
-    S_basis = asmatrix(u[:,dim_T:])
-    return S_basis, s
+    return u[:,dim_T:], s
 
 def affected_vertices(E, edge_idx):
     return set(E[edge_idx,:].ravel())
@@ -182,7 +184,6 @@ def calculate_exact_sub_stress_space(g, edge_idx, vtx_idx = None):
         t = t + 1
 
     return u[:,t:], s, (t-sub_dim_T)
-    
 
 
 def estimate_sub_stress_space_from_subgraphs(Ls, dim_T, g, vtx_indices, edge_indices):
@@ -325,62 +326,38 @@ def sample_from_sub_stress_space(sub_S_basis, sparse_param):
             
 def sample_from_stress_space(S_basis):
     n_S = S_basis.shape[1]
+    nss = min(n_S, SS_SAMPLES)
 
-    print_info("Sampling from stress space...")
+    print_info("Get random stresses...")
 
-    # If you want randomize:
-    stress_samples = asmatrix(S_basis) * asmatrix(random.random((n_S, SS_SAMPLES+SS_SAMPLES/2)))
+    if RANDOM_STRESS:
+        ss = asmatrix(S_basis) * asmatrix(random.random((n_S, nss+nss/2)))
+        if ORTHO_SAMPLES:
+            ss = svd(ss)[0]
+        return ss[:,:nss]
+    else:
+        # take the last SS_SAMPLES stress vectors in S_basis
+        return S_basis[:,n_S-SS_SAMPLES:]
 
-    # Else take the last ss_samples stress vectors in S_basis
-    #stress_samples = S_basis[:,n_S-SS_SAMPLES:]
 
-    if ORTHO_SAMPLES:
-        stress_samples = svd(stress_samples)[0][:,:stress_samples.shape[1]]
-
-    return stress_samples[:,:SS_SAMPLES]
-    #return S_basis
-
-def graph_scale(g, perturb, noise_std, sampling, k, min_neighbor, floor_plan):
+def graph_scale(g, perturb, noise_std, floor_plan):
     v, p, d, e, E = g.v, g.p, g.d, g.e, g.E
-
-    info = 'Graph scale parameters:'
-    info += '\n\tv = %d'        % v
-    info += '\n\tdimension = %d' % d
-    info += '\n\tdist threshold = %1.02f'   % PARAM_DIST_THRESHOLD
-    info += '\n\tmax neighbors = %d' % MAX_DEGREE
-    info += '\n\tnoise = %.04f (= %.04fm for additive noise)'     % (noise_std, noise_std * METER_RATIO)
-    info += '\n\tperturb = %.04f = %.04fm'     % (perturb, perturb * METER_RATIO)
-    info += '\n\tsampling = %2.02f'    % sampling
-    info += '\n\tkernel samples = %d'     % KERNEL_SAMPLES
-    info += '\n\tortho samples = %s'       % str(ORTHO_SAMPLES)[0]
-    info += '\n\tmult noise = %s'       % str(MULT_NOISE)[0]           
-    info += '\n\texact local stress = %s'       % str(EXACT_LOCAL_STRESS)[0]   
-    info += '\n\tstress space samples = %d'     % SS_SAMPLES                   
-    info += '\n\tweight kernel samples = %s'      % str(WEIGHT_KERNEL_SAMPLE)[0] 
-    info += '\n\tstress value perc = %d%%'    % STRESS_VAL_PERC              
-    info += '\n\tstress sample method = %s'         % STRESS_SAMPLE
-    info += '\n\tfloor plan = %s'                   % FLOOR_PLAN_FN
-    info += '\n\tpca stress kernel per linked comp. = %s' % str(PER_LC_KS_PCA)[0]
-    info += '\n\tSDP sample = %d' % SDP_SAMPLE
-    info += '\n\tSDP use DSDP = %s' % str(SDP_USE_DSDP)[0]
-    print_info(info)
-
-
     dim_T = g.gr.dim_T
 
-    if STRESS_SAMPLE == 'global':
-        n_samples = int(dim_T * sampling)
 
-        Ls, L = measure_L(g, perturb, noise_std, n_samples)
+    if STRESS_SAMPLE == 'global':
+        n_samples = int(dim_T * PARAM_SAMPLINGS)
+
+        Ls, L, exactL = measure_L(g, perturb, noise_std, n_samples)
 
         S_basis, tang_var = estimate_stress_space(Ls, dim_T)
-        stress_samples = sample_from_stress_space(S_basis)
+        ss = sample_from_stress_space(S_basis) # get stress samples
         
     else:
-        vtx_indices, edge_indices = g.get_k_ring_subgraphs(k, min_neighbor)
+        vtx_indices, edge_indices = g.get_k_ring_subgraphs(K_RING, MIN_LOCAL_NBHD)
 
-        n_samples = int(max([len(vi) * d for vi in vtx_indices]) * sampling)
-        Ls, L = measure_L(g, perturb, noise_std, n_samples)
+        n_samples = int(max([len(vi) * d for vi in vtx_indices]) * PARAM_SAMPLINGS)
+        Ls, L, exactL = measure_L(g, perturb, noise_std, n_samples)
 
         sub_S_basis, sparse_param = estimate_sub_stress_space_from_subgraphs(
             Ls = Ls,
@@ -391,17 +368,15 @@ def graph_scale(g, perturb, noise_std, sampling, k, min_neighbor, floor_plan):
 
         if STRESS_SAMPLE == 'semilocal':
             S_basis, tang_var = consolidate_sub_space(dim_T, sub_S_basis, sparse_param)
-            stress_samples = sample_from_stress_space(S_basis)
+            ss = sample_from_stress_space(S_basis)
 
         elif STRESS_SAMPLE == 'local':
             tang_var = zeros((1))
-            stress_samples = sample_from_sub_stress_space(sub_S_basis, sparse_param)
+            ss = sample_from_sub_stress_space(sub_S_basis, sparse_param)
 
-    K_basis, stress_spec = sample_stress_kernel(g, stress_samples)
+    K_basis, stress_spec = sample_stress_kernel(g, ss)
 
-    l_approx = asmatrix(zeros((g.d, g.v), 'd'))
-    af_approx = asmatrix(zeros((g.d, g.v), 'd'))
-
+    approx = asmatrix(zeros((g.d, g.v), 'd'))
 
     lcs = detect_linked_components_from_stress_kernel(g, g.gr.K_basis)
 
@@ -410,12 +385,7 @@ def graph_scale(g, perturb, noise_std, sampling, k, min_neighbor, floor_plan):
         sub_E, sub_E_idx = g.subgraph_edges(lc)
         sub_K, s, vh = svd(K_basis[lc,:])
 
-        if SS_SAMPLES == 1:
-            q = asmatrix(K_basis)[lc, :int(g.d * SDP_SAMPLE)].T
-        else:
-            q = asmatrix(sub_K)[:, :int(g.d * SDP_SAMPLE)].T
-            if PER_LC_KS_PCA:
-                stress_spec = s
+        q = asmatrix(sub_K)[:, :int(g.d * SDP_SAMPLE)].T
         
         if len(s) > d:
             cond = s[d-1]/s[d]
@@ -441,66 +411,47 @@ def graph_scale(g, perturb, noise_std, sampling, k, min_neighbor, floor_plan):
         T_q = T * q
         R = optimal_rigid(T_q, p[:,lc])
         T_q = (R * homogenous_vectors(T_q))[:d,:]
-        l_approx[:, lc] = T_q
-
-        af_approx[:,lc] = T_q
-        
-        #tr = optimal_affine(q, p[:,lc])
-        #af_approx[:, lc] = (tr *
-        #                    homogenous_vectors(q))[:d,:]
-        
-    
+        approx[:, lc] = T_q
 
     ## Calculate results from trilateration
-    ## print_info("Performing trilateration for comparison:")
-    ## tri = trilaterate_graph(g.adj, sqrt(L).A.ravel())
-    ## tri.p = (optimal_rigid(tri.p[:,tri.localized], p[:,tri.localized]) * homogenous_vectors(tri.p))[:d,:]
-    tri = None
+    if TRILATERATION:
+        print_info("Performing trilateration for comparison:")
+        tri = trilaterate_graph(g.adj, sqrt(exactL).A.ravel())
+        tri.p = (optimal_rigid(tri.p[:,tri.localized], p[:,tri.localized]) * homogenous_vectors(tri.p))[:d,:]
+    else:
+        tri = None
 
-    l = L_map(p, E, 0)
 
-    def mean_l2_error(v1, v2):
-        d, n = v1.shape
-        return mean(array([norm(v1[:,i] - v2[:,i]) for i in xrange(n)]))
-    
-    af_g_error = mean_l2_error(p, af_approx)
-    af_l_error = mean_l2_error(l.T, L_map(af_approx, E, 0).T)
+    g_error = norm(p - approx) / sqrt(float(v))
+    l_error = norm(sqrt(exactL) - sqrt(L_map(approx, E, 0))) /sqrt(float(e))
 
-    l_g_error = mean_l2_error(p, l_approx)
-    l_l_error = mean_l2_error(l.T, L_map(l_approx, E, 0).T)
-
-    #tri_g_error = mean_l2_error(p[:,tri.localized], tri.p[:,tri.localized])
-
-    #print("\t#localized vertices = %d = (%f%%).\n\tMean error = %f = %fm" %
-    #      (len(tri.localized), 100 *float(len(tri.localized))/v, tri_g_error, tri_g_error * METER_RATIO))
+    if tri:
+        tri_g_error = norm(p[:,tri.localized] - tri.p[:,tri.localized])
+        print_info("\t#localized vertices = %d = (%f%%).\n\tMean error = %f = %fm" %
+                   (len(tri.localized), 100 *float(len(tri.localized))/v, tri_g_error, tri_g_error * METER_RATIO))
     
     # plot the info
     plot_info(g,
-              L_opt_p = l_approx,
-              aff_opt_p = af_approx,
+              L_opt_p = approx,
               tri = tri,
               dim_T = dim_T,
               tang_var = sqrt(tang_var),
               stress_spec = sqrt(stress_spec),
               floor_plan = floor_plan,
-              stats = {"noise":noise_std,
-                       "perturb":perturb,
-                       "sampling":sampling,
-                       "samples":n_samples,
-                       "l g error": l_g_error,
-                       "l l error": l_l_error,
-                       "af g error": af_g_error,
-                       "af l error": af_l_error})
+              perturb = perturb)
 
-    print_info("Mean error %f = %fm" % (l_g_error, l_g_error * METER_RATIO))
+    print_info("PositionalError = %f = %fm" % (g_error, g_error * METER_RATIO))
+    print_info("DistanceError = %f = %fm" % (l_error, l_error * METER_RATIO))
 
-    return l_g_error
+    return g_error, l_error
 
 def main():
-    import sys
-    random.seed(0)
-    k =  math.pow(2*(PARAM_D+1), 1.0/PARAM_D)/3.0
-    dist_threshold = PARAM_DIST_THRESHOLD*k*math.pow(PARAM_V, -1.0/PARAM_D)
+    if check_info():
+        return
+
+    dump_settings()
+
+    random.seed(RANDOM_SEED)
 
     if FLOOR_PLAN_FN:
         floor_plan = Floorplan("%s/%s" % (DIR_DATA, FLOOR_PLAN_FN))
@@ -513,24 +464,15 @@ def main():
 
     g = random_graph(v = PARAM_V,
                      d = PARAM_D,
-                     max_dist = dist_threshold,
-                     min_dist = dist_threshold * 0.05,
+                     max_dist = DIST_THRESHOLD,
+                     min_dist = DIST_THRESHOLD * 0.05,
                      max_degree = MAX_DEGREE,
                      vpred = vpred,
                      epred = epred)
 
-    #g = largest_cc(g)
-    #g.gr = GenericRigidity(g.v, g.d, g.E)
-
-    if SINGLE_LC:
-        lcs = detect_linked_components_from_stress_kernel(g, g.gr.K_basis)
-        g = subgraph(g, lcs[0])
-        g.gr = GenericRigidity(g.v, g.d, g.E)
-
     edgelen = sqrt(L_map(g.p, g.E, 0.0).A.ravel())
     edgelen_min, edgelen_med, edgelen_max = min(edgelen), median(edgelen), max(edgelen)
-    global METER_RATIO
-    METER_RATIO = MAX_EDGE_LEN_IN_METER / edgelen_max
+
     print_info("Realworld ratio: 1 unit = %fm " % METER_RATIO)
     print_info("Edge length:\n\tmin = %f = %fm\n\tmedian = %f = %fm\n\tmax = %f = %fm" % (
         edgelen_min, edgelen_min * METER_RATIO,
@@ -541,17 +483,26 @@ def main():
         noise_std = PARAM_NOISE_STD
         perturb = edgelen_med * PARAM_PERTURB * noise_std
     else:
-        noise_std = PARAM_NOISE_STD * dist_threshold
+        noise_std = PARAM_NOISE_STD * DIST_THRESHOLD
         perturb = PARAM_PERTURB * noise_std
+
+    info = 'Graph scale parameters:'
+    info += '\n\tmu = sampling factor = %f'    % PARAM_SAMPLINGS
+    info += '\n\tdelta/(R*epsilon) = %f' % PARAM_PERTURB
+    info += '\n\tN = %d' % SS_SAMPLES
+    info += '\n\tD = %d' % int(SDP_SAMPLE * g.gr.dim_K)
+    info += '\n\tR = %f' % DIST_THRESHOLD
+    info += '\n\tepsilon = noise level = %f'  % (PARAM_NOISE_STD)
+    info += '\n\tepsilon*R = noise stddev = %f = %fm' % (noise_std, noise_std * METER_RATIO)
+    info += '\n\tdelta = perturb radius = %f = %fm'     % (perturb, perturb * METER_RATIO)
+    print_info(info)
 
     e = graph_scale(g = g, 
                     perturb=max(PARAM_MIN_PERTURB, perturb),
                     noise_std = noise_std,
-                    sampling = PARAM_SAMPLINGS,
-                    k = K_RING,
-                    min_neighbor = MIN_LOCAL_NBHD,
                     floor_plan = floor_plan)
-    sys.stdout.flush()
+
+    flush_info()
 
 
 if __name__ == "__main__":
