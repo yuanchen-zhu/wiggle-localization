@@ -14,16 +14,13 @@ from tri import *
 from plot import *
 from genrig import *
 from stress import *
+from substress import *
 from numpy import *
 import string
 
 from mitquest import Floorplan
 from scipy.linalg.basic import *
 from scipy.linalg.decomp import *
-
-class TooFewSamples(Exception):
-    pass
-    
 
 def build_edgeset(p, max_dist, min_dist, max_degree, pred):
     """
@@ -117,212 +114,6 @@ def estimate_stress_space(Ls, dim_T):
     u, s, vh = svd(Ls)              # dense
     return u[:,dim_T:], s
 
-def affected_vertices(E, edge_idx):
-    return set(E[edge_idx,:].ravel())
-
-def estimate_sub_stress_space(Ls, g, edge_idx, vtx_idx = None):
-    """
-    edge_idx is a 1-d array of edge indices. Only the indexed edges
-    have the correponding components of the stress space calculated.
-    """
-    u, s, vh = svd_conv(Ls[edge_idx, :]) # dense
-
-    if vtx_idx != None:
-        v = len(vtx_idx)
-    else:
-        v = len(affected_vertices(g.E, edge_idx))
-    d = g.d
-
-    # sanity check for subgraph
-    sub_dim_T = locally_rigid_rank(v, d)
-    if sub_dim_T > len(edge_idx) or sub_dim_T > Ls.shape[1]:
-        raise TooFewSamples()
-
-    # Now find the actual dimension of the tangent space, it should be
-    # in the range of [locally_rigid_rank(v, d), v * d]
-    prev_derivative = 1                   # derivative should always < 0
-    t = sub_dim_T
-    while t < min(len(edge_idx), Ls.shape[1], v * d):
-        derivative = math.log(s[t] / s[t-1]) / math.log(float(t)/float(t-1))
-        if derivative > prev_derivative:
-            break
-        prev_derivative = derivative
-        t = t + 1
-
-    sub_S_basis = asmatrix(u[:,t-1:])
-    return sub_S_basis, s, (t-1-sub_dim_T)
-
-# This doesn't work for some reason!
-def calculate_exact_sub_stress_space(g, edge_idx, vtx_idx = None):
-    p, E = g.p, g.E
-    if vtx_idx == None:
-        vtx_idx = affected_vertices(E, edge_idx)
-    v = len(vtx_idx)
-
-    invert_vtx_idx = -ones((v_d_e_from_graph(g)[0]), 'i')
-    for i, w in enumerate(vtx_idx):
-        invert_vtx_idx[w] = i
-
-    d = g.d
-
-    D = zeros((len(edge_idx), d * v))
-    print D.shape
-    for k, ei in enumerate(edge_idx):
-        i, j = E[ei][0], E[ei][1]
-        diff_ij = p[:,i] - p[:,j]
-        i = invert_vtx_idx[i]
-        j = invert_vtx_idx[j]
-        D[k, i*d:i*d+d] = 2.0 * diff_ij.T
-        D[k, j*d:j*d+d] = -2.0 * diff_ij.T
-
-    u, s, vh = svd(D)               # E by dv, sparse, 2dE non-zero
-    sub_dim_T =  locally_rigid_rank(v, d)
-    t = sub_dim_T
-    while t < min(len(edge_idx), v * d):
-        if s[t] < EPS:
-            break
-        t = t + 1
-
-    return u[:,t:], s, (t-sub_dim_T)
-
-
-def estimate_sub_stress_space_from_subgraphs(Ls, dim_T, g, vtx_indices, edge_indices):
-    v, e = g.v, g.e
-
-    print_info("Computing stress space for each subgraph")
-    sub_S_basis = []
-    n = 0
-    nz = 0
-    missing_stress = []
-    for i in xrange(v):
-
-        if EXACT_LOCAL_STRESS:
-            result = calculate_exact_sub_stress_space(g, edge_indices[i], vtx_indices[i])
-        else:
-            result = estimate_sub_stress_space(Ls, g, edge_indices[i], vtx_indices[i])
-
-        sub_S_basis.append(result[0])
-        missing_stress.append(result[2])
-        
-        n = n + sub_S_basis[i].shape[1]
-        nz = nz + sub_S_basis[i].shape[0] * sub_S_basis[i].shape[1]
-        sys.stdout.write('.')
-        sys.stdout.flush()
-    sys.stdout.write('\n')
-
-    missing_stress = array(missing_stress, 'd')
-    print_info("Local stress space lost dim:\n\tavg = %f\n\tmax = %f" % (
-        mean(missing_stress), max(missing_stress)))
-
-    return sub_S_basis, (e, n, nz, edge_indices)
-
-def consolidate_sub_space(dim_T, sub_basis, sparse_param):
-    e, n, nz, edge_indices = sparse_param
-
-    print_info("Consolidating subspaces...")
-
-    if USE_SPARSE_SVD:
-        read_succ = False
-        if CONSOLIDATE_READ_FROM_CACHE:
-            try:
-                fn = "%s/consolidate-pca-%d-%d-%d.cache" % (DIR_CACHE, e, n, nz)
-                f = open(fn, "r")
-                u, s = cPickle.load(f)
-                print_info("\tRead from consolidation PCA cache %s" % fn)
-                read_succ = True
-            except IOError:
-                print_info("\tError reading from consolidation PCA cache %s. Perform PCA..." % fn)
-
-        if (not CONSOLIDATE_READ_FROM_CACHE) or (not read_succ):
-            # Now write a temporary file of the big sparse matrix
-            print_info("Write out %dx%d sparse matrix for external SVDing" % (e, n) )
-            f = open("%s/input.st" % DIR_TMP, "w")
-            f.write("%d %d %d\n" % (e, n, nz))
-            for k, B in enumerate(sub_basis):
-                for i in xrange(B.shape[1]):
-                    f.write("%d" % B.shape[0])
-                    for j in xrange(B.shape[0]):
-                        f.write(" %d %f" % (edge_indices[k][j], B[j,i]))
-                    f.write("\n")
-            f.close()
-
-            # and use './svd' to svd factorize it
-            import os
-            os.system("%s/svd %s/input.st -o %s/output -d %d " % (DIR_BIN, DIR_TMP, DIR_TMP, e-dim_T))
-
-            print_info("Read back SVD result")
-            f = open("%s/output-Ut" % DIR_TMP, "r")      # read in columns
-            f.readline()                        # skip first line (dimension info)
-            u = zeros((e, e-dim_T), "d")
-            for i in xrange(e-dim_T):           # now grab each column
-                toks = string.split(f.readline())
-                c = array([map(float, toks)]).T
-                u[:,i] = c[:,0]
-            f.close()
-
-            f = open("%s/output-S" % DIR_TMP, "r")           # read in singular values
-            f.readline()
-            s = array(map(float, string.split(f.read())))
-            f.close()
-
-            if CONSOLIDATE_WRITE_TO_CACHE:
-                fn = "%s/consolidate-pca-%d-%d-%d.cache" % (DIR_CACHE, e, n, nz)
-                f = open(fn, "w")
-                cPickle.dump((u, s),f)
-                f.close()
-                print_info("\tWrite to consolidation PCA cache %s" % fn)
-    else:
-    
-        #The following uses scipy dense matrix routines
-
-        # Now unpack the various sub_basis into one big matrix
-        m = zeros((e, n))
-        j = 0;
-        for i in xrange(v):
-            j2 = j + sub_basis[i].shape[1]
-            m[edge_indices[i], j:j2] = sub_basis[i]
-            j = j2
-
-        # The matrix is e by n, where
-        # n = v * avg_local_stress_dim
-        #   = v * (avg_local_n_edges - avg_local_n_v * d)
-        #   = v * avg_local_n_v * (avg_degree - d)
-        #   = ~ 4v * avg_local_n_v
-        # since avg_degree = 6, and d = 2
-        #
-        # The number of non-zero entries are
-        # n * avg_local_n_edges
-        # = 4v * avg_local_n_v^2 * avg_degree
-        # = 24v * avg_local_n_v^2
-        #
-        # avg_local_n_v = ~30 for 2-ring, ~60 for 3-ring, ~100 for
-        # 4-ring
-
-        u, s, vh = svd(m)
-        u = u[:, :(e-dim_T)], s[:e-dimT]
-
-    thr = median(s) * STRESS_VAL_PERC /100
-    i = e-dim_T-1
-    while  i >= 0 and s[i] < thr:
-        i = i-1
-    print_info("Top %d (%f%%) of %d stresses used" % (i+1, 100*float(i+1)/(e-dim_T), e-dim_T))
-    return u[:,:i+1], s
-
-def sample_from_sub_stress_space(sub_S_basis, sparse_param):
-    e, n, nz, edge_indices = sparse_param
-
-    print_info("Sampling from sub stress spaces...")
-    stress_samples = zeros((e, SS_SAMPLES+SS_SAMPLES/2), order = 'FORTRAN')
-    for i in xrange(SS_SAMPLES+SS_SAMPLES/2):
-        for j, basis in enumerate(sub_S_basis):
-            w = asmatrix(basis) * asmatrix(random.random((basis.shape[1], 1)))
-            w /= norm(w)
-            stress_samples[edge_indices[j],i:i+1] += w
-
-    if ORTHO_SAMPLES:
-        stress_samples = svd(stress_samples)[0][:,:stress_samples.shape[1]]
-
-    return stress_samples[:,:SS_SAMPLES]            
             
 def sample_from_stress_space(S_basis):
     n_S = S_basis.shape[1]
@@ -345,6 +136,8 @@ def graph_scale(g, perturb, noise_std, floor_plan):
     dim_T = g.gr.dim_T
 
 
+    tang_var = None
+    stress_var = None
     if STRESS_SAMPLE == 'global':
         n_samples = int(dim_T * PARAM_SAMPLINGS)
 
@@ -367,11 +160,11 @@ def graph_scale(g, perturb, noise_std, floor_plan):
             edge_indices = edge_indices)
 
         if STRESS_SAMPLE == 'semilocal':
-            S_basis, tang_var = consolidate_sub_space(dim_T, sub_S_basis, sparse_param)
+            S_basis, stress_var = consolidate_sub_space(dim_T, sub_S_basis, sparse_param)
             ss = sample_from_stress_space(S_basis)
 
         elif STRESS_SAMPLE == 'local':
-            tang_var = zeros((1))
+            stress_var = zeros((1))
             ss = sample_from_sub_stress_space(sub_S_basis, sparse_param)
 
     K_basis, stress_spec = sample_stress_kernel(g, ss)
@@ -435,7 +228,8 @@ def graph_scale(g, perturb, noise_std, floor_plan):
               L_opt_p = approx,
               tri = tri,
               dim_T = dim_T,
-              tang_var = sqrt(tang_var),
+              tang_var = tang_var,
+              stress_var = stress_var,
               stress_spec = sqrt(stress_spec),
               floor_plan = floor_plan,
               perturb = perturb)
@@ -487,14 +281,14 @@ def main():
         perturb = PARAM_PERTURB * noise_std
 
     info = 'Graph scale parameters:'
-    info += '\n\tmu = sampling factor = %f'    % PARAM_SAMPLINGS
-    info += '\n\tdelta/(R*epsilon) = %f' % PARAM_PERTURB
+    info += '\n\tmu = sampling factor = %g'    % PARAM_SAMPLINGS
+    info += '\n\tdelta/(R*epsilon) = %g' % PARAM_PERTURB
     info += '\n\tN = %d' % SS_SAMPLES
     info += '\n\tD = %d' % int(SDP_SAMPLE * g.gr.dim_K)
-    info += '\n\tR = %f' % DIST_THRESHOLD
-    info += '\n\tepsilon = noise level = %f'  % (PARAM_NOISE_STD)
-    info += '\n\tepsilon*R = noise stddev = %f = %fm' % (noise_std, noise_std * METER_RATIO)
-    info += '\n\tdelta = perturb radius = %f = %fm'     % (perturb, perturb * METER_RATIO)
+    info += '\n\tR = %g' % DIST_THRESHOLD
+    info += '\n\tepsilon = noise level = %g'  % (PARAM_NOISE_STD)
+    info += '\n\tepsilon*R = noise stddev = %g = %gm' % (noise_std, noise_std * METER_RATIO)
+    info += '\n\tdelta = perturb radius = %g = %gm'     % (perturb, perturb * METER_RATIO)
     print_info(info)
 
     e = graph_scale(g = g, 

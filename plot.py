@@ -5,7 +5,7 @@ from settings import *
 from util import *
 import os
 
-def plot_info(g, L_opt_p, tri, dim_T, tang_var, stress_spec, floor_plan, perturb):
+def plot_info(g, L_opt_p, tri, dim_T, tang_var, stress_var, stress_spec, floor_plan, perturb):
 
     d, v, p, E  = g.d, g.v, g.p, g.E
 
@@ -17,9 +17,14 @@ def plot_info(g, L_opt_p, tri, dim_T, tang_var, stress_spec, floor_plan, perturb
         semilogy()
         plot(xrange(1, 1+len(tang_var)),tang_var)
         axvline(dim_T)
-        axhline(median(tang_var)*STRESS_VAL_PERC/100)
+        gca().set_aspect('auto')
+
+    def draw_stress_var():
+        semilogy()
+        plot(xrange(len(stress_var)), stress_var)
+        axvline(g.e - g.gr.dim_T)
+        axhline(median(stress_var)*STRESS_VAL_PERC/100)
         #axvline(len(tang_var)*STRESS_PERC/100)
-    
         gca().set_aspect('auto')
 
 
@@ -100,10 +105,16 @@ def plot_info(g, L_opt_p, tri, dim_T, tang_var, stress_spec, floor_plan, perturb
     width = 1.0/3.0
     height = (1.0-margin*2)/2.0
 
-    clf()
-    axes([margin, margin, width-margin*2, height-margin*2])
-    title("Tangent Sample Variance")
-    draw_tangent_var()
+    if tang_var != None:
+        clf()
+        axes([margin, margin, width-margin*2, height-margin*2])
+        title("Tangent Sample Variance")
+        draw_tangent_var()
+    else:
+        clf()
+        axes([margin, margin, width-margin*2, height-margin*2])
+        title("Sub-Stress PCA Variance")
+        draw_stress_var()
 
     axes([margin, height+margin, width-margin*2, height-margin*2])
     title("Stress Matrix Eigenvalues")
@@ -116,17 +127,22 @@ def plot_info(g, L_opt_p, tri, dim_T, tang_var, stress_spec, floor_plan, perturb
     save(fn+'-summary')
     os.system("gnome-open %s-summary.pdf" %fn)
 
-    #draw tangent var
+    #draw tangent or stress var
     figure(figsize=(6,6))
     clf()
-    draw_tangent_var()
-    save(fn+'-tangent')
+    if tang_var != None:
+        draw_tangent_var()
+        save(fn+'-tangentvar')
+    else:
+        draw_stress_var()
+        save(fn+'-stressvar')
+        
 
     #draw stress
     figure(figsize=(6,6))
     clf()
     draw_stress_eig()
-    save(fn+'-stress')
+    save(fn+'-stresseig')
 
     #draw geometry
     figure(figsize=(6,6))

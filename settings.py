@@ -8,18 +8,18 @@ RANDOM_SEED = 0
 
 # If non-null, specifies the floor plan file used for testing. Must be
 # in MITquest XML format.
-FLOOR_PLAN_FN = None #"space.xml?10-2"
+FLOOR_PLAN_FN = "space.xml?10-2"
 
 # Number of vertices of the initiallly generated graph. The actual
 # graph used for testing however will be pruned further depending on
 # the various parameters.
-PARAM_V = 50
+PARAM_V = 200
 
 # Dimesion of graph configuration / embedding.
 PARAM_D = 2
 
 # List of std. dev noises to test
-PARAM_NOISE_STD = 1e-3
+PARAM_NOISE_STD = 0
 
 # Whether measurement noise is multiplicative or not
 MULT_NOISE = False
@@ -45,17 +45,30 @@ MAX_DEGREE = 7
 
 # Whether to prune the generated graph so only one globally linked
 # component is left.
-SINGLE_LC = False
+SINGLE_LC = True
 
 # Whether to filter out dangling vertices and components. The
 # filtering is simpe minded, but increases likely hood of the graph
 # being locally rigid.
-FILTER_DANGLING = False
+FILTER_DANGLING = True
 
 
 ######################################################################
 # Algorithm parameters controlling execution of the algorithm
 ######################################################################
+
+# Method to calculate stress space: 'global' | 'semilocal' |
+# 'local'. If equals 'global', the tangent space of the entire graph
+# is calculated and the stress space is set to be its orthogonal
+# complement. If equals 'semilocal', the stress space of subgraphs are
+# calculated using the 'global' method, and then these sub stress
+# spaces are pieced together using PCA. If equals 'local', the stress
+# space of subgraphs are calculated as in 'semilocal,' but the stress
+# samples are then calculated as sums of random samples from each
+# local stress space, i.e., the global stress space is never
+# calculated.
+STRESS_SAMPLE = 'semilocal'
+
 
 # Whether to trilaterate
 TRILATERATION = False
@@ -69,7 +82,7 @@ PARAM_PERTURB = 10
 PARAM_SAMPLINGS = 4
 
 # Minimal perturbation standard deviation
-PARAM_MIN_PERTURB =  1e-3
+PARAM_MIN_PERTURB =  1e-6
 
 # Number of stress space samples, i.e., the number of stress matrix
 # samples.
@@ -79,26 +92,15 @@ SS_SAMPLES = 200
 # configuration equals this number times the actual dimension of the
 # configuration. If 0, then the least square solver will be used,
 # using d coordinate vectors.
-SDP_SAMPLE = 2
+SDP_SAMPLE = 1
 
-# Method to calculate stress space: 'global' | 'semilocal' |
-# 'local'. If equals 'global', the tangent space of the entire graph
-# is calculated and the stress space is set to be its orthogonal
-# complement. If equals 'semilocal', the stress space of subgraphs are
-# calculated using the 'global' method, and then these sub stress
-# spaces are pieced together using PCA. If equals 'local', the stress
-# space of subgraphs are calculated as in 'semilocal,' but the stress
-# samples are then calculated as sums of random samples from each
-# local stress space, i.e., the global stress space is never
-# calculated.
-STRESS_SAMPLE = 'global'
 
 # When STRESS_SAMPLE = semilocal | local, each vertex together with
 # its K_RING-ring is considered as the starting point of each local
 # subgraph. More rings are added to the subgraph till at least
 # MIN_LOCAL_NBHD vertices are contained in it.
 K_RING = 2
-MIN_LOCAL_NBHD = 30
+MIN_LOCAL_NBHD = MAX_DEGREE*2
 
 # When STRESS_SAMPLE = semilocal, after running PCA on basis of all
 # local stress spaces, the left singular vectors corresponding to
@@ -113,10 +115,6 @@ RANDOM_STRESS = True
 # if random stress is used, whether the set stress vector samples
 # (source of stress matrix) should be made orthonormal.
 ORTHO_SAMPLES = True
-
-# Whether exact local stress spaces should be calculated. Currently
-# doesn't work.
-EXACT_LOCAL_STRESS = False
 
 ######################################################################
 # General program settings. These rarely need to be changed.
