@@ -1,7 +1,7 @@
 from numpy import *
 from scipy.linalg.basic import *
 from scipy.linalg.decomp import *
-from settings import *
+import settings as S
 
 def factorial(n):              
     """
@@ -24,6 +24,7 @@ def print_info(s):
     import sys
     sys.stderr.write("INFO: %s\n" % s)
     sys.stderr.flush()
+    global info_buffer
     info_buffer.append(s)
 
 def check_info():
@@ -31,22 +32,32 @@ def check_info():
     exist and print if it does."""
 
     try:
-        fn = "%s/%s.info" % (DIR_PLOT, get_settings_hash())
+        fn = "%s/%s.info" % (S.DIR_PLOT, get_settings_hash())
         f = open(fn, "rb")
         l = f.read()
         print "### Cached info %s present. Will skip actural run." %fn
         print l
         f.close()
-        return True
-    except IOError:
-        return False
 
-def flush_info():
-    """ Flush info to [hash].info where hash is hash(settings)"""
-    f = open("%s/%s.info" % (DIR_PLOT, get_settings_hash()), "wb")
+        f = open("%s/%s.result" % (S.DIR_PLOT, get_settings_hash()), "rb")
+        t = f.read().strip().split()
+        f.close()
+        
+        return float(t[0]), float(t[1])
+    except IOError:
+        return None
+
+def flush_info(error_p, error_d):
+    """ Flush info to [hash].info where hash is hash(settings) and write error to [hash].result"""
+    global info_buffer
+    f = open("%s/%s.info" % (S.DIR_PLOT, get_settings_hash()), "wb")
     for l in info_buffer:
         f.write(l)
         f.write('\n')
+    f.close()
+    info_buffer = []
+    f = open("%s/%s.result" % (S.DIR_PLOT, get_settings_hash()), "wb")
+    f.write("%g %g" % (error_p, error_d))
     f.close()
 
 def dump_settings():
@@ -72,7 +83,7 @@ def svd_conv(m):
         except LinAlgError:
             m = m + random.randn(m.shape[0], m.shape[1]) * 1e-20
 
-def matrix_rank(m, eps = EPS):
+def matrix_rank(m, eps = S.EPS):
     u, s, vh = svd(m)
     return len(s[s > eps])
           

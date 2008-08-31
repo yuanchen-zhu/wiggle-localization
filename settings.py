@@ -1,31 +1,40 @@
 EPS = 1e-14
 
+
+######################################################################
+# Output control
+######################################################################
+sPLOT_SIZE = 5
+sMARGIN = 0.06
+sSKIP_PLOT = False
+sENUMERATE_GLC = False
+
 ######################################################################
 # Simulation parameters controlling inputs to the simulation
 ######################################################################
 
-RANDOM_SEED = 0
+RANDOM_SEED = 13
 
 # If non-null, specifies the floor plan file used for testing. Must be
 # in MITquest XML format.
-FLOOR_PLAN_FN = "space.xml?10-2"
+FLOOR_PLAN_FN =  "space.xml?10-2"
 
 # Number of vertices of the initiallly generated graph. The actual
 # graph used for testing however will be pruned further depending on
 # the various parameters.
-PARAM_V = 200
+PARAM_V = 500
 
 # Dimesion of graph configuration / embedding.
 PARAM_D = 2
 
 # List of std. dev noises to test
-PARAM_NOISE_STD = 0
+PARAM_NOISE_STD = 1e-3
 
 # Whether measurement noise is multiplicative or not
 MULT_NOISE = False
 
 # Threshold controlling the longest edge in the generated graph.
-PARAM_DIST_THRESHOLD = 4
+PARAM_DIST_THRESHOLD = 5
 
 # The length of the longest edge in the graph measured in meters. This
 # is only useful for printing testing results in real-world units.
@@ -34,14 +43,16 @@ MAX_EDGE_LEN_IN_METER = 30.0
 # Ratio of 1 meter / 1 unit length in the test. This global variable
 # is calculated from MAX_EDGE_LEN_IN_METER
 
-import math
-_k =  math.pow(2*(PARAM_D+1), 1.0/PARAM_D)/3.0
-DIST_THRESHOLD = PARAM_DIST_THRESHOLD*_k*math.pow(PARAM_V, -1.0/PARAM_D)
+def dist_threshold():
+    import math
+    _k =  math.pow(2*(PARAM_D+1), 1.0/PARAM_D)/3.0
+    return PARAM_DIST_THRESHOLD*_k*math.pow(PARAM_V, -1.0/PARAM_D)
 
-METER_RATIO = MAX_EDGE_LEN_IN_METER / DIST_THRESHOLD
+def meter_ratio():
+    return MAX_EDGE_LEN_IN_METER / dist_threshold()
 
 # Max vertex degree of generated graph.
-MAX_DEGREE = 7
+MAX_DEGREE = 9
 
 # Whether to prune the generated graph so only one globally linked
 # component is left.
@@ -69,12 +80,11 @@ FILTER_DANGLING = True
 # calculated.
 STRESS_SAMPLE = 'semilocal'
 
-
 # Whether to trilaterate
 TRILATERATION = False
 
 # perturb-to-noise ratios to test
-PARAM_PERTURB = 10
+PARAM_PERTURB = 20
 
 # The number of perturbed L measurement samples to be taken is the
 # dimension of the actual tangent space times numbers in this
@@ -82,7 +92,7 @@ PARAM_PERTURB = 10
 PARAM_SAMPLINGS = 4
 
 # Minimal perturbation standard deviation
-PARAM_MIN_PERTURB =  1e-6
+PARAM_MIN_PERTURB =  1e-8
 
 # Number of stress space samples, i.e., the number of stress matrix
 # samples.
@@ -92,15 +102,14 @@ SS_SAMPLES = 200
 # configuration equals this number times the actual dimension of the
 # configuration. If 0, then the least square solver will be used,
 # using d coordinate vectors.
-SDP_SAMPLE = 1
-
+SDP_SAMPLE = 10
 
 # When STRESS_SAMPLE = semilocal | local, each vertex together with
 # its K_RING-ring is considered as the starting point of each local
 # subgraph. More rings are added to the subgraph till at least
 # MIN_LOCAL_NBHD vertices are contained in it.
 K_RING = 2
-MIN_LOCAL_NBHD = MAX_DEGREE*2
+MIN_LOCAL_NBHD = 20
 
 # When STRESS_SAMPLE = semilocal, after running PCA on basis of all
 # local stress spaces, the left singular vectors corresponding to

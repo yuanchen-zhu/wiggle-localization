@@ -2,6 +2,7 @@ from numpy import *
 from scipy.linalg.basic import *
 from scipy.linalg.decomp import *
 from util import *
+import settings as S
 
 def translate_matrix(t):
     """
@@ -185,29 +186,29 @@ def optimal_linear_transform_for_l_sdp(p, d, E, l):
 
     # Use (I * EPS) because the DSDP solver seems to enforce strict
     # inequality constraints, i.e., S < 0 instead of S <= 0.
-    h1 = matrix(spmatrix([EPS]*k,range(k),range(k),(k,k)))
+    h1 = matrix(spmatrix([S.EPS]*k,range(k),range(k),(k,k)))
 
     c = matrix([[0.0]*n + [1.0]])
     
-    if SDP_USE_DSDP:
+    if S.SDP_USE_DSDP:
         sol = solvers.sdp(c, Gs=[G0,G1], hs=[h0,h1], solver="dsdp")
     else:
         sol = solvers.sdp(c, Gs=[G0,G1], hs=[h0,h1])
     
     x = sol['x']
 
-    S = zeros((k, k))
+    s = zeros((k, k))
     i = 0
     for r in xrange(k):
         for c in xrange(r + 1):
             if r == c:
-                S[r, c] = x[i]
+                s[r, c] = x[i]
             else:
-                S[r, c] = S[c, r] = x[i]
+                s[r, c] = s[c, r] = x[i]
             i = i + 1
 
-    # find M s.t transpose(M) * M = rank_restricted(S, d)
-    e, v = eig(S)                      # we have S = v * diag(e) * v.T
+    # find M s.t transpose(M) * M = rank_restricted(s, d)
+    e, v = eig(s)                      # we have s = v * diag(e) * v.T
     e, v = sqrt(e.real), v.real
     order = range(k)
     order.sort(key = lambda i: -e[i]) # e[order] is sorted in descreasing value

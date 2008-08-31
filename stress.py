@@ -1,5 +1,5 @@
 from numpy import *
-from settings import *
+import settings as S
 from util import *
 from scipy.linalg.basic import *
 import sys
@@ -15,7 +15,7 @@ def stress_matrix_from_vector(w, E, v):
     return O
 
 
-def calculate_single_stress_kernel(omega, kern_dim_minus_one = None, eps = EPS):
+def calculate_single_stress_kernel(omega, kern_dim_minus_one = None, eps = S.EPS):
     v = omega.shape[0]
     
     eigval, eigvec = eig(omega)     # v by v, sparse, 2vd non-zero entries
@@ -30,7 +30,6 @@ def calculate_single_stress_kernel(omega, kern_dim_minus_one = None, eps = EPS):
     kd = kern_dim_minus_one + 1
 
     return eigvec[:,order[1:kd]], eigval[order[1:]]
-
 
 def enumerate_tris(adj):
     v = len(adj)
@@ -54,6 +53,9 @@ def enumerate_tris(adj):
 
 def detect_linked_components_from_stress_kernel(g, kernel_basis, eps = 1e-9):
     print_info("Detecting linked components:")
+    if g.d != 2:
+        print_info("\tNon-2d: assume entire graph is connected for now...")
+        return[range(g.v)]
     print_info("\tkernel_basis.shape = %s" % str(kernel_basis.shape))
     tris = enumerate_tris(g.adj)
     v_cc = [set([]) for i in xrange(g.v)]
@@ -100,10 +102,11 @@ def sample_stress_kernel(g, ss):
     v, d, E = g.v, g.d, g.E
     ns = ss.shape[1]
 
-    S = zeros((v,v), 'd')
+    as = zeros((v,v), 'd')
     for i in xrange(ns):
         w = ss[:,i]
         o = asmatrix(stress_matrix_from_vector(w, E, v))
-        S += o.T * o
+        as += o.T * o
 
-    return calculate_single_stress_kernel(S, max(int(g.d * SDP_SAMPLE), g.gr.dim_K - 1))
+#    return calculate_single_stress_kernel(as, max(int(g.d * S.SDP_SAMPLE), g.gr.dim_K - 1))
+    return calculate_single_stress_kernel(as, int(g.d * S.SDP_SAMPLE))

@@ -6,7 +6,8 @@ import cPickle
 import sys
 sys.path = ['/usr/lib/python%s/site-packages/oldxml' % sys.version[:3]] + sys.path 
 
-from settings import *
+import settings
+
 from geo import *
 from util import *
 from graph import *
@@ -54,10 +55,10 @@ def build_edgeset(p, max_dist, min_dist, max_degree, pred):
     return array(list(E), 'i')
 
 
-def random_graph(v, d, max_dist, min_dist, max_degree, vpred, epred):
+def random_graph(v, d, max_dist, min_dist, max_degree):
     print_info("Create random graph...")
-    param_hash = hash((v, d, max_dist, min_dist, max_degree, FLOOR_PLAN_FN, FILTER_DANGLING, SINGLE_LC))
-    cache_fn = "%s/graph-%d.cache" % (DIR_CACHE, param_hash)
+    param_hash = hash((v, d, max_dist, min_dist, max_degree, S.FLOOR_PLAN_FN, S.FILTER_DANGLING, S.SINGLE_LC, S.RANDOM_SEED))
+    cache_fn = "%s/graph-%d.cache" % (S.DIR_CACHE, param_hash)
     g = None
 
     try:
@@ -69,11 +70,20 @@ def random_graph(v, d, max_dist, min_dist, max_degree, vpred, epred):
         print_info("\tError reading from graph cache %s. Generating graph " % cache_fn)
 
     if g == None:
+        if S.FLOOR_PLAN_FN:
+            floor_plan = Floorplan("%s/%s" % (S.DIR_DATA, S.FLOOR_PLAN_FN))
+            vpred = lambda p: floor_plan.inside(p)
+            epred = lambda p, q: not floor_plan.intersect(p, q)
+        else:
+            floor_plan = None
+            vpred = lambda p: 1
+            epred = lambda p, q: 1
+
         p = random_p(v, d, vpred)
         E = build_edgeset(p, max_dist, min_dist, max_degree, epred)
         g = Graph(p, E)
         print_info("|V|=%d |E|=%d" % (g.v, g.e))
-        if FILTER_DANGLING:
+        if S.FILTER_DANGLING:
             print_info("Filtering dangling vertices and components...")
             while 1:
                 oldv = g.v
@@ -85,15 +95,20 @@ def random_graph(v, d, max_dist, min_dist, max_degree, vpred, epred):
 
         g.gr = GenericRigidity(g.v, g.d, g.E)
 
-        if SINGLE_LC:
+        if S.SINGLE_LC:
             lcs = detect_linked_components_from_stress_kernel(g, g.gr.K_basis)
             g = subgraph(g, lcs[0])
             g.gr = GenericRigidity(g.v, g.d, g.E)
+            if g.gr.type != 'G':
+                import os
+                os.system("echo %d >> glc-non-ggr" % S.RANDOM_SEED)
 
+        g.floor_plan = floor_plan
         f = open(cache_fn, "w")
         cPickle.dump(g, f)
         f.close()
         print_info("\tWrite to graph cache %s" % cache_fn)
+        
 
     print_info("\t|V|=%d\n\t|E|=%d\n\tMeanDegree=%f" % (g.v, g.e, 2.0 * float(g.e)/float(g.v)))
     print_info('\ttype = %s\n\trigidity matrix rank = %d  (max = %d)\n\tstress kernel dim = %d (min = %d)'
@@ -117,29 +132,30 @@ def estimate_stress_space(Ls, dim_T):
             
 def sample_from_stress_space(S_basis):
     n_S = S_basis.shape[1]
-    nss = min(n_S, SS_SAMPLES)
+    nss = min(n_S, S.SS_SAMPLES)
 
     print_info("Get random stresses...")
 
-    if RANDOM_STRESS:
+    if S.RANDOM_STRESS:
         ss = asmatrix(S_basis) * asmatrix(random.random((n_S, nss+nss/2)))
-        if ORTHO_SAMPLES:
+        if S.ORTHO_SAMPLES:
             ss = svd(ss)[0]
         return ss[:,:nss]
     else:
         # take the last SS_SAMPLES stress vectors in S_basis
-        return S_basis[:,n_S-SS_SAMPLES:]
+        return S_basis[:,n_S-S.SS_SAMPLES:]
 
+NS = 0
 
-def graph_scale(g, perturb, noise_std, floor_plan):
+def graph_scale(g, perturb, noise_std):
     v, p, d, e, E = g.v, g.p, g.d, g.e, g.E
     dim_T = g.gr.dim_T
 
 
     tang_var = None
     stress_var = None
-    if STRESS_SAMPLE == 'global':
-        n_samples = int(dim_T * PARAM_SAMPLINGS)
+    if S.STRESS_SAMPLE == 'global':
+        n_samples = int(dim_T * S.PARAM_SAMPLINGS)
 
         Ls, L, exactL = measure_L(g, perturb, noise_std, n_samples)
 
@@ -147,9 +163,9 @@ def graph_scale(g, perturb, noise_std, floor_plan):
         ss = sample_from_stress_space(S_basis) # get stress samples
         
     else:
-        vtx_indices, edge_indices = g.get_k_ring_subgraphs(K_RING, MIN_LOCAL_NBHD)
+        vtx_indices, edge_indices = g.get_k_ring_subgraphs(S.K_RING, S.MIN_LOCAL_NBHD)
 
-        n_samples = int(max([len(vi) * d for vi in vtx_indices]) * PARAM_SAMPLINGS)
+        n_samples = int(max([len(vi) * d for vi in vtx_indices]) * S.PARAM_SAMPLINGS)
         Ls, L, exactL = measure_L(g, perturb, noise_std, n_samples)
 
         sub_S_basis, sparse_param = estimate_sub_stress_space_from_subgraphs(
@@ -159,11 +175,11 @@ def graph_scale(g, perturb, noise_std, floor_plan):
             vtx_indices = vtx_indices,
             edge_indices = edge_indices)
 
-        if STRESS_SAMPLE == 'semilocal':
+        if S.STRESS_SAMPLE == 'semilocal':
             S_basis, stress_var = consolidate_sub_space(dim_T, sub_S_basis, sparse_param)
             ss = sample_from_stress_space(S_basis)
 
-        elif STRESS_SAMPLE == 'local':
+        elif S.STRESS_SAMPLE == 'local':
             stress_var = zeros((1))
             ss = sample_from_sub_stress_space(sub_S_basis, sparse_param)
 
@@ -172,13 +188,17 @@ def graph_scale(g, perturb, noise_std, floor_plan):
     approx = asmatrix(zeros((g.d, g.v), 'd'))
 
     lcs = detect_linked_components_from_stress_kernel(g, g.gr.K_basis)
+    g.lcs = lcs
 
     print_info("Optimizing and fitting each linked components:")
-    for lc in lcs:
+    for i, lc in enumerate(lcs):
         sub_E, sub_E_idx = g.subgraph_edges(lc)
         sub_K, s, vh = svd(K_basis[lc,:])
 
-        q = asmatrix(sub_K)[:, :int(g.d * SDP_SAMPLE)].T
+        sdps = round(S.SDP_SAMPLE * math.log(float(len(lc))) / math.log(g.v))
+        sdps = min(max(sdps, 1), S.SDP_SAMPLE)
+
+        q = asmatrix(sub_K)[:, :int(g.d * sdps)].T
         
         if len(s) > d:
             cond = s[d-1]/s[d]
@@ -188,16 +208,17 @@ def graph_scale(g, perturb, noise_std, floor_plan):
         #q = asmatrix(q)[2:3,:]
         if q.shape[0] < g.d:
             q = vstack((q, zeros((g.d-q.shape[0], q.shape[1]))))
-        print_info("\tv=%d\te=%d\tcond. no.=%g\tev=%s\tq.shape=%s" %
+        print_info("GLC #%d:" % (i+1))
+        print_info("\tv=%d\n\te=%d\n\tcond. no.=%g\n\tev=%s\tq.shape=%s" %
                    (len(lc),
                     len(sub_E_idx),
                     cond,
                     str(s[:min(len(s),d+1)]),
                     str(q.shape)))
 
-        print_info("Performing SDP to recover configuration from %d coordinate vectors..." % q.shape[0])
+        print_info("\tSDP on %d coordinate vectors..." % q.shape[0])
 
-        if SDP_SAMPLE == 0:
+        if S.SDP_SAMPLE == 0:
             T = optimal_linear_transform_for_l_lsq(q, d, sub_E, L[sub_E_idx])
         else:
             T = optimal_linear_transform_for_l_sdp(q, d, sub_E, L[sub_E_idx])
@@ -207,7 +228,7 @@ def graph_scale(g, perturb, noise_std, floor_plan):
         approx[:, lc] = T_q
 
     ## Calculate results from trilateration
-    if TRILATERATION:
+    if S.TRILATERATION:
         print_info("Performing trilateration for comparison:")
         tri = trilaterate_graph(g.adj, sqrt(exactL).A.ravel())
         tri.p = (optimal_rigid(tri.p[:,tri.localized], p[:,tri.localized]) * homogenous_vectors(tri.p))[:d,:]
@@ -221,7 +242,7 @@ def graph_scale(g, perturb, noise_std, floor_plan):
     if tri:
         tri_g_error = norm(p[:,tri.localized] - tri.p[:,tri.localized])
         print_info("\t#localized vertices = %d = (%f%%).\n\tMean error = %f = %fm" %
-                   (len(tri.localized), 100 *float(len(tri.localized))/v, tri_g_error, tri_g_error * METER_RATIO))
+                   (len(tri.localized), 100 *float(len(tri.localized))/v, tri_g_error, tri_g_error * S.meter_ratio()))
     
     # plot the info
     plot_info(g,
@@ -231,73 +252,74 @@ def graph_scale(g, perturb, noise_std, floor_plan):
               tang_var = tang_var,
               stress_var = stress_var,
               stress_spec = sqrt(stress_spec),
-              floor_plan = floor_plan,
               perturb = perturb)
 
-    print_info("PositionalError = %f = %fm" % (g_error, g_error * METER_RATIO))
-    print_info("DistanceError = %f = %fm" % (l_error, l_error * METER_RATIO))
+    print_info("PositionalError = %f = %fm" % (g_error, g_error * S.meter_ratio()))
+    print_info("DistanceError = %f = %fm" % (l_error, l_error * S.meter_ratio()))
+
+    global NS
+    NS = n_samples
 
     return g_error, l_error
 
-def main():
-    if check_info():
-        return
+def simulate(ignore_cache = False):
+    if not ignore_cache:
+        e = check_info()
+        if e != None:
+            return e
 
     dump_settings()
 
-    random.seed(RANDOM_SEED)
+    random.seed(S.RANDOM_SEED)
 
-    if FLOOR_PLAN_FN:
-        floor_plan = Floorplan("%s/%s" % (DIR_DATA, FLOOR_PLAN_FN))
-        vpred = lambda p: floor_plan.inside(p)
-        epred = lambda p, q: not floor_plan.intersect(p, q)
-    else:
-        floor_plan = None
-        vpred = lambda p: 1
-        epred = lambda p, q: 1
+    g = random_graph(v = S.PARAM_V,
+                     d = S.PARAM_D,
+                     max_dist = S.dist_threshold(),
+                     min_dist = S.dist_threshold() * 0.05,
+                     max_degree = S.MAX_DEGREE)
 
-    g = random_graph(v = PARAM_V,
-                     d = PARAM_D,
-                     max_dist = DIST_THRESHOLD,
-                     min_dist = DIST_THRESHOLD * 0.05,
-                     max_degree = MAX_DEGREE,
-                     vpred = vpred,
-                     epred = epred)
+    if S.sENUMERATE_GLC:
+        return -1, -1
 
     edgelen = sqrt(L_map(g.p, g.E, 0.0).A.ravel())
     edgelen_min, edgelen_med, edgelen_max = min(edgelen), median(edgelen), max(edgelen)
 
-    print_info("Realworld ratio: 1 unit = %fm " % METER_RATIO)
+    print_info("Realworld ratio: 1 unit = %fm " % S.meter_ratio())
     print_info("Edge length:\n\tmin = %f = %fm\n\tmedian = %f = %fm\n\tmax = %f = %fm" % (
-        edgelen_min, edgelen_min * METER_RATIO,
-        edgelen_med, edgelen_med * METER_RATIO,
-        edgelen_max, edgelen_max * METER_RATIO))
+        edgelen_min, edgelen_min * S.meter_ratio(),
+        edgelen_med, edgelen_med * S.meter_ratio(),
+        edgelen_max, edgelen_max * S.meter_ratio()))
     
-    if MULT_NOISE:
-        noise_std = PARAM_NOISE_STD
-        perturb = edgelen_med * PARAM_PERTURB * noise_std
+    if S.MULT_NOISE:
+        noise_std = S.PARAM_NOISE_STD
+        perturb = edgelen_med * S.PARAM_PERTURB * noise_std
     else:
-        noise_std = PARAM_NOISE_STD * DIST_THRESHOLD
-        perturb = PARAM_PERTURB * noise_std
+        noise_std = S.PARAM_NOISE_STD * S.dist_threshold()
+        perturb = S.PARAM_PERTURB * noise_std
 
     info = 'Graph scale parameters:'
-    info += '\n\tmu = sampling factor = %g'    % PARAM_SAMPLINGS
-    info += '\n\tdelta/(R*epsilon) = %g' % PARAM_PERTURB
-    info += '\n\tN = %d' % SS_SAMPLES
-    info += '\n\tD = %d' % int(SDP_SAMPLE * g.gr.dim_K)
-    info += '\n\tR = %g' % DIST_THRESHOLD
-    info += '\n\tepsilon = noise level = %g'  % (PARAM_NOISE_STD)
-    info += '\n\tepsilon*R = noise stddev = %g = %gm' % (noise_std, noise_std * METER_RATIO)
-    info += '\n\tdelta = perturb radius = %g = %gm'     % (perturb, perturb * METER_RATIO)
+    info += '\n\tmu = sampling factor = %g'    % S.PARAM_SAMPLINGS
+    info += '\n\tdelta/(R*epsilon) = %g' % S.PARAM_PERTURB
+    info += '\n\tN = %d' % S.SS_SAMPLES
+    info += '\n\tD = %d' % int(S.SDP_SAMPLE * g.d)
+    info += '\n\tR = %g' % S.dist_threshold()
+    info += '\n\tepsilon = noise level = %g'  % (S.PARAM_NOISE_STD)
+    info += '\n\tepsilon*R = noise stddev = %g = %gm' % (noise_std, noise_std * S.meter_ratio())
+    info += '\n\tdelta = perturb radius = %g = %gm'     % (perturb, perturb * S.meter_ratio())
     print_info(info)
 
     e = graph_scale(g = g, 
-                    perturb=max(PARAM_MIN_PERTURB, perturb),
-                    noise_std = noise_std,
-                    floor_plan = floor_plan)
+                    perturb=max(S.PARAM_MIN_PERTURB, perturb),
+                    noise_std = noise_std)
 
-    flush_info()
-
+    flush_info(e[0], e[1])
+    return e
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 1:
+        simulate(int(sys.argv[1]) > 0)
+    else:
+        simulate(False)
+
+
+

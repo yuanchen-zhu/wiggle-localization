@@ -1,4 +1,4 @@
-from settings import *
+import settings as S*
 from util import *
 from stress import *
 from genrig import *

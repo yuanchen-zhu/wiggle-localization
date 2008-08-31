@@ -1,4 +1,4 @@
-from settings import *
+import settings as S
 from numpy import *
 from util import *
 from stress import *
@@ -25,7 +25,7 @@ def L_map(p, E, noise_std):
     v = asarray(p[:, E[:,0]] - p[:, E[:,1]])
     d = sqrt((v * v).sum(axis=0))
     noise = random.randn(len(E)) * noise_std
-    if MULT_NOISE:
+    if S.MULT_NOISE:
         d *= (1 + noise)
     else:
         d += noise
@@ -33,7 +33,7 @@ def L_map(p, E, noise_std):
 
 class GenericRigidity:
 
-    def __init__(self, v, d, E, eps = EPS, rigidity_iter = 3, stress_iter = 3):
+    def __init__(self, v, d, E, eps = S.EPS, rigidity_iter = 3, stress_iter = 3):
         print_info('Calculating generic rigidity...')
         if v*(v-1)/2 == d:
             self.type = 'G'
