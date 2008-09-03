@@ -87,6 +87,8 @@ class Graph:
                         if not (dest in vtx_indices[i]):
                             vtx_indices[i].add(dest)
                             new_ring.add(dest)
+                if len(new_ring) == 0:
+                    break
                 prev_ring = new_ring
 
 
@@ -105,13 +107,10 @@ class Graph:
         return vtx_indices, edge_indices
 
     def subgraph_edges(self, v_subset):
-        ridx = -ones((self.v), 'i')
-        for i, w in enumerate(v_subset):
-            ridx[w] = i
-
-        t = array([[i, ridx[e[0]], ridx[e[1]]]
+        r = ridx(v_subset, self.v)
+        t = array([[i, r[e[0]], r[e[1]]]
                    for i, e in enumerate(self.E)
-                   if ridx[e[0]] >= 0 and ridx[e[1]] >= 0], 'i')
+                   if r[e[0]] >= 0 and r[e[1]] >= 0], 'i')
 
         if len(t) == 0:
             return zeros((0,2),'i'), zeros((0,),'i')

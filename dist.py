@@ -14,8 +14,8 @@ from graph import *
 from tri import *
 from plot import *
 from genrig import *
-from stress import *
-from substress import *
+import stress
+import substress
 from numpy import *
 import string
 
@@ -96,7 +96,8 @@ def random_graph(v, d, max_dist, min_dist, max_degree):
         g.gr = GenericRigidity(g.v, g.d, g.E)
 
         if S.SINGLE_LC:
-            lcs = detect_linked_components_from_stress_kernel(g, g.gr.K_basis)
+
+            lcs = stress.detect_LC_from_kernel(g, g.gr.K_basis)
             g = subgraph(g, lcs[0])
             g.gr = GenericRigidity(g.v, g.d, g.E)
             if g.gr.type != 'G':
@@ -125,32 +126,11 @@ def measure_L(g, perturb, noise_std, n_samples):
 
     return Ls, L_map(g.p, g.E, noise_std), L_map(g.p, g.E, 0)
 
-def estimate_stress_space(Ls, dim_T):
-    u, s, vh = svd(Ls)              # dense
-    return u[:,dim_T:], s
-
-            
-def sample_from_stress_space(S_basis):
-    n_S = S_basis.shape[1]
-    nss = min(n_S, S.SS_SAMPLES)
-
-    print_info("Get random stresses...")
-
-    if S.RANDOM_STRESS:
-        ss = asmatrix(S_basis) * asmatrix(random.random((n_S, nss+nss/2)))
-        if S.ORTHO_SAMPLES:
-            ss = svd(ss)[0]
-        return ss[:,:nss]
-    else:
-        # take the last SS_SAMPLES stress vectors in S_basis
-        return S_basis[:,n_S-S.SS_SAMPLES:]
-
 NS = 0
 
 def graph_scale(g, perturb, noise_std):
     v, p, d, e, E = g.v, g.p, g.d, g.e, g.E
     dim_T = g.gr.dim_T
-
 
     tang_var = None
     stress_var = None
@@ -159,44 +139,52 @@ def graph_scale(g, perturb, noise_std):
 
         Ls, L, exactL = measure_L(g, perturb, noise_std, n_samples)
 
-        S_basis, tang_var = estimate_stress_space(Ls, dim_T)
-        ss = sample_from_stress_space(S_basis) # get stress samples
+        if S.EXACT_STRESS:
+            S_basis, tang_var = stress.calculate_exact_space(g)
+        else:
+            S_basis, tang_var = estimate_stress_space(Ls, dim_T)
+        ss = stress.sample(S_basis) # get stress samples
         
     else:
-        vtx_indices, edge_indices = g.get_k_ring_subgraphs(S.K_RING, S.MIN_LOCAL_NBHD)
+        Vs, Es = g.get_k_ring_subgraphs(S.K_RING, S.MIN_LOCAL_NBHD)
 
-        n_samples = int(max([len(vi) * d for vi in vtx_indices]) * S.PARAM_SAMPLINGS)
+        n_samples = int(max([len(vi) * d for vi in Vs]) * S.PARAM_SAMPLINGS)
         Ls, L, exactL = measure_L(g, perturb, noise_std, n_samples)
 
-        sub_S_basis, sparse_param = estimate_sub_stress_space_from_subgraphs(
+        sub_S_basis, sparse_param = substress.estimate_space_from_subgraphs(
             Ls = Ls,
-            dim_T = dim_T,
             g = g,
-            vtx_indices = vtx_indices,
-            edge_indices = edge_indices)
+            Vs = Vs,
+            Es = Es)
 
         if S.STRESS_SAMPLE == 'semilocal':
-            S_basis, stress_var = consolidate_sub_space(dim_T, sub_S_basis, sparse_param)
-            ss = sample_from_stress_space(S_basis)
+            S_basis, stress_var = substress.consolidate(dim_T, sub_S_basis, sparse_param)
+            ss = stress.sample(S_basis)
 
         elif S.STRESS_SAMPLE == 'local':
             stress_var = zeros((1))
-            ss = sample_from_sub_stress_space(sub_S_basis, sparse_param)
+            ss = substress.sample(sub_S_basis, sparse_param)
 
-    K_basis, stress_spec = sample_stress_kernel(g, ss)
+    if S.STRESS_SAMPLE == 'semilocal':
+        g.gsr = GenericSubstressRigidity(g, Vs, Es)
+        lcs = stress.detect_LC_from_kernel(g, g.gsr.K_basis)
+    else:
+        lcs = stress.detect_LC_from_kernel(g, g.gr.K_basis)
+    g.lcs = lcs
+
+    K_basis, stress_spec = stress.sample_kernel(g, ss)
 
     approx = asmatrix(zeros((g.d, g.v), 'd'))
 
-    lcs = detect_linked_components_from_stress_kernel(g, g.gr.K_basis)
-    g.lcs = lcs
 
     print_info("Optimizing and fitting each linked components:")
     for i, lc in enumerate(lcs):
         sub_E, sub_E_idx = g.subgraph_edges(lc)
         sub_K, s, vh = svd(K_basis[lc,:])
+        #sub_K, s = K_basis[lc,:], array([0,0,0,0])
 
         sdps = round(S.SDP_SAMPLE * math.log(float(len(lc))) / math.log(g.v))
-        sdps = min(max(sdps, 1), S.SDP_SAMPLE)
+        sdps = min(max(sdps, S.SDP_SAMPLE_MIN), S.SDP_SAMPLE)
 
         q = asmatrix(sub_K)[:, :int(g.d * sdps)].T
         
@@ -205,7 +193,7 @@ def graph_scale(g, perturb, noise_std):
         else:
             cond = 1e200
 
-        #q = asmatrix(q)[2:3,:]
+        #q = asmatrix(q)[:15,:]
         if q.shape[0] < g.d:
             q = vstack((q, zeros((g.d-q.shape[0], q.shape[1]))))
         print_info("GLC #%d:" % (i+1))

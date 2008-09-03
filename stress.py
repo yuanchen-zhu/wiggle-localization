@@ -3,8 +3,35 @@ import settings as S
 from util import *
 from scipy.linalg.basic import *
 import sys
+import genrig
 
-def stress_matrix_from_vector(w, E, v):
+def estimate_stress_space(Ls, dim_T):
+    u, s, vh = svd(Ls)              # dense
+    return u[:,dim_T:], s
+
+def calculate_exact_space(g):
+    D = genrig.rigidity_matrix(g.v, g.d, g.E, g.p)
+    u, s, vh = svd_conv(D)               # E by dv, sparse, 2dE non-zero
+    t = len(s[s >= S.EPS])
+    return u[:,t:], s
+
+            
+def sample(S_basis):
+    n_S = S_basis.shape[1]
+    nss = min(n_S, S.SS_SAMPLES)
+
+    print_info("Get random stresses...")
+
+    if S.RANDOM_STRESS:
+        ss = asmatrix(S_basis) * asmatrix(random.random((n_S, nss+nss/2)))
+        if S.ORTHO_SAMPLES:
+            ss = svd(ss)[0]
+        return ss[:,:nss]
+    else:
+        # take the last SS_SAMPLES stress vectors in S_basis
+        return S_basis[:,n_S-S.SS_SAMPLES:]
+
+def matrix_from_vector(w, E, v):
     O = asmatrix(zeros((v,v), 'd'))
     V = xrange(v)
     for i in xrange(len(E)):
@@ -15,7 +42,7 @@ def stress_matrix_from_vector(w, E, v):
     return O
 
 
-def calculate_single_stress_kernel(omega, kern_dim_minus_one = None, eps = S.EPS):
+def kernel(omega, kern_dim_minus_one = None, eps = S.EPS):
     v = omega.shape[0]
     
     eigval, eigvec = eig(omega)     # v by v, sparse, 2vd non-zero entries
@@ -51,7 +78,7 @@ def enumerate_tris(adj):
                         tris.append([u, w, x])
     return tris
 
-def detect_linked_components_from_stress_kernel(g, kernel_basis, eps = 1e-9):
+def detect_LC_from_kernel(g, kernel_basis, eps = 1e-4):
     print_info("Detecting linked components:")
     if g.d != 2:
         print_info("\tNon-2d: assume entire graph is connected for now...")
@@ -98,15 +125,22 @@ def detect_linked_components_from_stress_kernel(g, kernel_basis, eps = 1e-9):
     return cc
 
 
-def sample_stress_kernel(g, ss):
+def sample_kernel(g, ss, auto_dim_K = False, eps = S.EPS):
     v, d, E = g.v, g.d, g.E
     ns = ss.shape[1]
 
     as = zeros((v,v), 'd')
     for i in xrange(ns):
         w = ss[:,i]
-        o = asmatrix(stress_matrix_from_vector(w, E, v))
+        o = asmatrix(matrix_from_vector(w, E, v))
         as += o.T * o
 
-#    return calculate_single_stress_kernel(as, max(int(g.d * S.SDP_SAMPLE), g.gr.dim_K - 1))
-    return calculate_single_stress_kernel(as, int(g.d * S.SDP_SAMPLE))
+    if auto_dim_K:
+        return kernel(as, None, eps)
+    else:
+        if S.STRESS_SAMPLE == 'semilocal':
+            mdk = g.gsr.dim_K - 1
+        else:
+            mdk = g.gr.dim_K - 1
+        
+        return kernel(as, max(int(g.d * S.SDP_SAMPLE), mdk), eps)

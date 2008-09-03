@@ -4,6 +4,7 @@ from matplotlib.patches import Circle
 from util import *
 import os
 import settings as S
+import substress 
 
 def plot_info(g, L_opt_p, tri, dim_T, tang_var, stress_var, stress_spec, perturb):
 
@@ -29,7 +30,7 @@ def plot_info(g, L_opt_p, tri, dim_T, tang_var, stress_var, stress_spec, perturb
         semilogy()
         plot(xrange(len(stress_var)), stress_var)
         axvline(g.e - g.gr.dim_T)
-        axhline(median(stress_var)*S.STRESS_VAL_PERC/100)
+        axvline(substress.PCA_CUTOFF)
         #axvline(len(tang_var)*S.STRESS_PERC/100)
         gca().set_aspect('auto')
 
@@ -234,7 +235,7 @@ def plot_info(g, L_opt_p, tri, dim_T, tang_var, stress_var, stress_spec, perturb
                   "Error")
 
     save(fn+'-summary')
-    #os.system("gnome-open %s-summary.pdf" %fn)
+    os.system("gnome-open %s-summary.pdf" %fn)
 
     #draw tangent or stress var
     fs = (S.sPLOT_SIZE,S.sPLOT_SIZE)

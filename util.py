@@ -103,3 +103,8 @@ def get_module_consts(mod):
     return [(n, mod.__getattribute__(n)) for n in dir(mod) if n.isupper()]
 
     
+def ridx(idx, size):
+    r = -ones((size), 'i')
+    for i, w in enumerate(idx):
+        r[w] = i
+    return r

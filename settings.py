@@ -13,7 +13,7 @@ sENUMERATE_GLC = False
 # Simulation parameters controlling inputs to the simulation
 ######################################################################
 
-RANDOM_SEED = 13
+RANDOM_SEED = 14
 
 # If non-null, specifies the floor plan file used for testing. Must be
 # in MITquest XML format.
@@ -22,13 +22,13 @@ FLOOR_PLAN_FN =  "space.xml?10-2"
 # Number of vertices of the initiallly generated graph. The actual
 # graph used for testing however will be pruned further depending on
 # the various parameters.
-PARAM_V = 500
+PARAM_V = 200
 
 # Dimesion of graph configuration / embedding.
 PARAM_D = 2
 
 # List of std. dev noises to test
-PARAM_NOISE_STD = 1e-3
+PARAM_NOISE_STD = 1e-4
 
 # Whether measurement noise is multiplicative or not
 MULT_NOISE = False
@@ -80,6 +80,9 @@ FILTER_DANGLING = True
 # calculated.
 STRESS_SAMPLE = 'semilocal'
 
+# Whether to use exact stress space from coordinates
+EXACT_STRESS = True
+
 # Whether to trilaterate
 TRILATERATION = False
 
@@ -102,7 +105,8 @@ SS_SAMPLES = 200
 # configuration equals this number times the actual dimension of the
 # configuration. If 0, then the least square solver will be used,
 # using d coordinate vectors.
-SDP_SAMPLE = 10
+SDP_SAMPLE = 1
+SDP_SAMPLE_MIN = 1
 
 # When STRESS_SAMPLE = semilocal | local, each vertex together with
 # its K_RING-ring is considered as the starting point of each local
@@ -115,7 +119,7 @@ MIN_LOCAL_NBHD = 20
 # local stress spaces, the left singular vectors corresponding to
 # singular values less than STRESS_VAL_PERC * median(singular values)
 # are discarded.
-STRESS_VAL_PERC = 0
+STRESS_VAL_PERC = 2
 
 # Whether to create random stress or to use the calculated basis of
 # the stress space
@@ -130,11 +134,11 @@ ORTHO_SAMPLES = True
 ######################################################################
 
 # Whether pca consolidation of local stress space checks the disk-cache first
-CONSOLIDATE_READ_FROM_CACHE = True
+CONSOLIDATE_READ_FROM_CACHE = False
 
 # Wheter the result of stress space consolidation is written to the
 # disk-cache.
-CONSOLIDATE_WRITE_TO_CACHE = True
+CONSOLIDATE_WRITE_TO_CACHE = False
 
 # Directory where plot files reside
 DIR_PLOT = "plot"

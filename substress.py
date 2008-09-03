@@ -6,7 +6,7 @@ from graph import *
 from tri import *
 from plot import *
 from genrig import *
-from stress import *
+import stress
 from numpy import *
 import string, math
 
@@ -16,12 +16,10 @@ from scipy.linalg.decomp import *
 class TooFewSamples(Exception):
     pass
    
-
-
 def affected_vertices(E, edge_idx):
     return set(E[edge_idx,:].ravel())
 
-def estimate_sub_stress_space(Ls, g, edge_idx, vtx_idx = None):
+def estimate_space(Ls, g, edge_idx, vtx_idx = None):
     """
     edge_idx is a 1-d array of edge indices. Only the indexed edges
     have the correponding components of the stress space calculated.
@@ -53,7 +51,28 @@ def estimate_sub_stress_space(Ls, g, edge_idx, vtx_idx = None):
     sub_S_basis = asmatrix(u[:,t-1:])
     return sub_S_basis, s, (t-1-sub_dim_T)
 
-def estimate_sub_stress_space_from_subgraphs(Ls, dim_T, g, vtx_indices, edge_indices):
+
+def calculate_exact_space(g, edge_idx, vtx_idx = None, replaceP = None):
+    E = g.E
+    if replaceP == None:
+        p = g.p
+    else:
+        p = replaceP
+    if vtx_idx == None:
+        vtx_idx = affected_vertices(E, edge_idx)
+    v = len(vtx_idx)
+
+    r = ridx(vtx_idx, g.v)
+
+    d = g.d
+    newE = E[edge_idx]
+
+    D = rigidity_matrix(v, d, [[r[e[0]], r[e[1]]] for e in newE], g.p[:,vtx_idx])
+    u, s, vh = svd_conv(D)               # E by dv, sparse, 2dE non-zero
+    t = len(s[s >= S.EPS * 10])
+    return u[:,t:], s, (locally_rigid_rank(v, d)-t)
+
+def estimate_space_from_subgraphs(Ls, g, Vs, Es):
     v, e = g.v, g.e
 
     print_info("Computing stress space for each subgraph")
@@ -62,13 +81,16 @@ def estimate_sub_stress_space_from_subgraphs(Ls, dim_T, g, vtx_indices, edge_ind
     nz = 0
     missing_stress = []
     for i in xrange(v):
-        result = estimate_sub_stress_space(Ls, g, edge_indices[i], vtx_indices[i])
+        if S.EXACT_STRESS:
+            basis, s, misdim = calculate_exact_space(g, Es[i], Vs[i])
+        else:
+            basis, s, misdim = estimate_space(Ls, g, Es[i], Vs[i])
 
-        sub_S_basis.append(result[0])
-        missing_stress.append(result[2])
+        sub_S_basis.append(basis)
+        missing_stress.append(misdim)
         
-        n = n + sub_S_basis[i].shape[1]
-        nz = nz + sub_S_basis[i].shape[0] * sub_S_basis[i].shape[1]
+        nz += sub_S_basis[i].shape[0] * sub_S_basis[i].shape[1]
+        n += sub_S_basis[i].shape[1]
         sys.stdout.write('.')
         sys.stdout.flush()
     sys.stdout.write('\n')
@@ -77,10 +99,12 @@ def estimate_sub_stress_space_from_subgraphs(Ls, dim_T, g, vtx_indices, edge_ind
     print_info("Local stress space lost dim:\n\tavg = %f\n\tmax = %f" % (
         mean(missing_stress), max(missing_stress)))
 
-    return sub_S_basis, (e, n, nz, edge_indices)
+    return sub_S_basis, (e, n, nz, Es)
 
-def consolidate_sub_space(dim_T, sub_basis, sparse_param):
-    e, n, nz, edge_indices = sparse_param
+PCA_CUTOFF = 0 # global stats reported by consolidate
+
+def consolidate(dim_T, sub_basis, sparse_param):
+    e, n, nz, Es = sparse_param
 
     print_info("Consolidating subspaces...")
 
@@ -105,7 +129,7 @@ def consolidate_sub_space(dim_T, sub_basis, sparse_param):
                 for i in xrange(B.shape[1]):
                     f.write("%d" % B.shape[0])
                     for j in xrange(B.shape[0]):
-                        f.write(" %d %f" % (edge_indices[k][j], B[j,i]))
+                        f.write(" %d %f" % (Es[k][j], B[j,i]))
                     f.write("\n")
             f.close()
 
@@ -140,9 +164,9 @@ def consolidate_sub_space(dim_T, sub_basis, sparse_param):
         # Now unpack the various sub_basis into one big matrix
         m = zeros((e, n))
         j = 0;
-        for i in xrange(v):
+        for i in xrange(len(sub_basis)):
             j2 = j + sub_basis[i].shape[1]
-            m[edge_indices[i], j:j2] = sub_basis[i]
+            m[Es[i], j:j2] = sub_basis[i]
             j = j2
 
         # The matrix is e by n, where
@@ -163,15 +187,18 @@ def consolidate_sub_space(dim_T, sub_basis, sparse_param):
         u, s, vh = svd(m)
         u = u[:, :(e-dim_T)], s[:e-dimT]
 
-    thr = median(s) * S.STRESS_VAL_PERC /100
+    thr = median(s[:e-dim_T]) * S.STRESS_VAL_PERC /100
     i = len(s) - 1
     while  i >= 0 and s[i] < thr:
         i = i-1
     print_info("Top %d (%f%%) of %d stresses used" % (i+1, 100*float(i+1)/(e-dim_T), e-dim_T))
+    global PCA_CUTOFF
+    PCA_CUTOFF = i+1
+    
     return u[:,:i+1], s
 
-def sample_from_sub_stress_space(sub_S_basis, sparse_param):
-    e, n, nz, edge_indices = sparse_param
+def sample(sub_S_basis, sparse_param):
+    e, n, nz, Es = sparse_param
 
     print_info("Sampling from sub stress spaces...")
     stress_samples = zeros((e, S.SS_SAMPLES+S.SS_SAMPLES/2), order = 'FORTRAN')
@@ -179,9 +206,11 @@ def sample_from_sub_stress_space(sub_S_basis, sparse_param):
         for j, basis in enumerate(sub_S_basis):
             w = asmatrix(basis) * asmatrix(random.random((basis.shape[1], 1)))
             w /= norm(w)
-            stress_samples[edge_indices[j],i:i+1] += w
+            stress_samples[Es[j],i:i+1] += w
 
     if S.ORTHO_SAMPLES:
         stress_samples = svd(stress_samples)[0][:,:stress_samples.shape[1]]
 
     return stress_samples[:,:S.SS_SAMPLES]            
+
+

@@ -1,13 +1,15 @@
 import settings as S
 from numpy import *
 from util import *
-from stress import *
+import stress
+import substress
 
 def locally_rigid_rank(v, d):
     return v * d - chooses(d+1,2)
 
-def rigidity_matrix(v, d, E):
-    p = random_p(v, d, None)
+def rigidity_matrix(v, d, E, p = None):
+    if p == None:
+        p = random_p(v, d, None)
     D = zeros((len(E), d * v))
     for k in xrange(len(E)):
         i, j = E[k][0], E[k][1]
@@ -33,7 +35,7 @@ def L_map(p, E, noise_std):
 
 class GenericRigidity:
 
-    def __init__(self, v, d, E, eps = S.EPS, rigidity_iter = 3, stress_iter = 3):
+    def __init__(self, v, d, E, eps = S.EPS, rigidity_iter = 1, stress_iter =1):
         print_info('Calculating generic rigidity...')
         if v*(v-1)/2 == d:
             self.type = 'G'
@@ -46,6 +48,7 @@ class GenericRigidity:
 
         for x in xrange(rigidity_iter):
             D = rigidity_matrix(v, d, E)
+
             u, s, vh = svd(D)               # E by dv, sparse, 2dE non-zero
             rigidity_rank = max(rigidity_rank, len(s[s >= eps]))
 
@@ -55,8 +58,8 @@ class GenericRigidity:
                 
                 w /= norm(w)
                 
-                omega = stress_matrix_from_vector(w, E, v)
-                kern, oev = calculate_single_stress_kernel(omega)
+                omega = stress.matrix_from_vector(w, E, v)
+                kern, oev = stress.kernel(omega)
                 if dim_K > kern.shape[1]+1:
                     dim_K = kern.shape[1]+1
                     self.K_basis = kern
@@ -76,3 +79,38 @@ class GenericRigidity:
 
         print_info('\ttype = %s\n\trigidity matrix rank = %d  (max = %d)\n\tstress kernel dim = %d (min = %d)'
                    % (self.type, rigidity_rank, t, dim_K, d + 1))
+
+
+class GenericSubstressRigidity:
+    def __init__(self, g, Vs, Es, eps = S.EPS):
+        import sys
+        print_info('Calculating generic rigidity using substresses...')
+
+        v, e = g.v, g.e
+        p = random_p(g.v, g.d, None)
+
+        print_info("\tComputing stress space for each subgraph")
+        sub_S_basis = []
+        n = 0
+        nz = 0
+        for i in xrange(v):
+            B, s, misdim = substress.calculate_exact_space(g, Es[i], Vs[i], p)
+
+            sub_S_basis.append(B)
+            nz += B.shape[0] * B.shape[1]
+            n += B.shape[1]
+            sys.stdout.write('.')
+            sys.stdout.flush()
+
+        sys.stdout.write('\n')
+        sparse_param = (e, n, nz, Es)
+
+        S_basis, stress_var = substress.consolidate(g.gr.dim_T, sub_S_basis, sparse_param)
+        ss = stress.sample(S_basis)
+
+
+        K_basis, stress_spec = stress.sample_kernel(g, ss, True, 1e-5)
+
+        self.K_basis = K_basis
+        self.dim_K = K_basis.shape[1]
+        print_info('\tstress kernel dim = %d (min = %d)' % (self.dim_K, g.d + 1))

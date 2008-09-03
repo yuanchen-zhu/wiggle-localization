@@ -1,6 +1,6 @@
 import settings as S*
 from util import *
-from stress import *
+import stress
 from genrig import *
 from graph import *
 from dist import *
@@ -23,10 +23,10 @@ n_samples = int(dim_T * 16)
 L_rhos, L_rho = measure_L_rho(g, 1e-5, 0, n_samples)
 
 S_basis, cov_spec = estimate_stress_space(L_rhos, dim_T)
-stress_samples = sample_from_stress_space(S_basis)
+stress_samples = stress.sample(S_basis)
 K_basis, stress_spec = estimate_stress_kernel(g, stress_samples)
 
-vcc, cc = detect_linked_components_from_stress_kernel(g, K_basis)
+vcc, cc = stress.detect_LC_from_kernel(g, K_basis)
 print vcc, cc
 
 ## D = rigidity_matrix(v, d, E)
@@ -39,7 +39,7 @@ print vcc, cc
 ## #w = sb[:,0]
 ## w /= norm(w)
 
-## omega = stress_matrix_from_vector(w, E, v)
+## omega = stress.matrix_from_vector(w, E, v)
 ## eigval, eigvec = eig(omega)
 ## eigval = abs(eigval)
 
