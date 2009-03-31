@@ -14,7 +14,7 @@ sDUMP_LC = False
 # Simulation parameters controlling input fed to the simulation
 ######################################################################
 
-RANDOM_SEED = 0
+RANDOM_SEED = 2
 
 # If non-null, specifies the floor plan file used for testing. Must be
 # in MITquest XML format.

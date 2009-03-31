@@ -45,89 +45,80 @@ def matrix_from_vector(w, E, v):
 def is_nan(f):
     return type(f) == 'float' and f != f
 
+class NoValidEigenValueFound:
+    pass
+
 class Kernel:
     def __init__(self, sigma):
         self.v = sigma.shape[0]
         self.sigma = asmatrix(sigma)
         self.eigval, self.eigvec = eigh(self.sigma)
+
+        self.eigval = abs(self.eigval)
+        order = range(self.v)
+        order.sort(key = lambda i : self.eigval[i])
+        self.eigval = self.eigval[order]
+        self.eigvec = self.eigvec[:, order]
         
     def extract(self, eps = S.EPS):
         kd = len(self.eigval[self.eigval < eps])
         return self.eigvec[:,1:kd], self.eigval[1:]
 
     def extract_sub(self, sub_dims, kern_dim_minus_one, eps = S.EPS):
+        if len(sub_dims) == 1:
+            return zeros((1, kern_dim_minus_one), 'd'), zeros((1,1), 'd')
 
         basis = asmatrix(ones(((self.v), 1), 'd')* (1.0/sqrt(self.v)))
         for i in xrange(kern_dim_minus_one):
+            print_info("\nSearching for sub kernel basis No. %d:" % (i+1))
             C = zeros(basis.shape, 'd')
             C[sub_dims, :] = basis[sub_dims, :]
 
-            if len(sub_dims) < self.v:
-                C = hstack((C, ones((self.v, 1), 'd')))
+            C = hstack((C, ones((self.v, 1), 'd')))
+            P =asmatrix(svd(C)[0])[:, i+2:]
 
-            u, s, vt = svd(C)
-            if len(sub_dims) < self.v:
-                P = asmatrix(u)[:, i+2:]
-            else:
-                P = asmatrix(u)[:, i+1:]
+            # questions: 1. why need to add the all-1 vector again
+            # (otherwise, all eigenvalues are NaN);
 
-            new_sigma = P.T * self.sigma * P
-            if False: #method 1
+            # 2. why won't single triangle work in this case (cannot
+            # find all components)?
+    
+            J = asmatrix(zeros((self.v, self.v), 'd'))
+            for v in sub_dims:
+                J[v, v] = 1.0
+
+            J_bar = P.T * J * P
+            S_bar = P.T * self.sigma * P
+
+            val, vec = eig(a=S_bar, b=J_bar)
+            
+            #print "ev: ", val[:10]
+            k = None
+            mins = 1e100
+            besty = None
+            for j, v in enumerate(val):
+                if abs(imag(v)) > eps or isnan(real(v)) or isnan(imag(v)):
+                    continue
                 
-                val, vec = eigh(new_sigma)
-                
-                print_info "ev: ", val[:10]
-                ns = [norm((P * asmatrix(vec)[:, j])[sub_dims,:]) for j in xrange(len(val))]
-                print "n: ", ns[:10]
-                k = None
-                for j in xrange(len(val)):
-                    if ns[j] > 1e-1:
-                        k = j
-                        break
-                
-                if k == None:
-                    k = 0
-            else: #method 2
+                y0 = asmatrix(vec)[:, j]
+                n = norm((P * y0)[sub_dims,:])
+                if n > eps:
 
-                J = asmatrix(zeros((self.v, self.v), 'd'))
-                for v in sub_dims:
-                    J[v, v] = 1.0
-
-                J = P.T * J * P
-                S = P.T * self.sigma * P
-
-                val, vec = eig(a=S, b=J)
-                
-                #print "ev: ", val[:10]
-                k = None
-                mins = 1e100
-                for j in xrange(len(val)):
-                    if abs(imag(val[j])) > eps or isnan(imag(val[j])) or isnan(real(val[j])):
-                        continue
+                    y = y0/n
                     
-                    w = asmatrix(vec)[:, j]
-                    n = norm((P * w)[sub_dims,:])
-                    if n > eps:
-                        print n, val[j], vec[:,j]
+                    ss = (y.T * S_bar * y)[0,0]
+                    if  ss < mins:
+                        print_info("\tnorm(J P y0)=%g\n\teigval=%s\n\teigvec_is_complex=%s\n\ty^t S_bar y = %s" % (n, str(v), str(norm(imag(y0)) > eps), str(ss)))
                         
-                        y = w/n
-                        print norm(S * w), norm(J * w)
-                        
-                        ss = y.T * S * y
-                        if  ss < mins:
-                            mins = ss
-                            k = j
-                
-                if k == None:
-                    k = 0
+                        mins = ss
+                        k = j
+                        besty = y
+            
+            if k == None:
+                return zeros((len(sub_dims), kern_dim_minus_one), 'd'), zeros((kern_dim_minus_one))
+                raise NoValidEigenValueFound()
 
-            print k, val[k], vec[:, k]
-            y = P * real(asmatrix(vec)[:, k])
-            basis = hstack((basis, y / norm(y[sub_dims,:])))
-
-
-        B = basis[sub_dims,:]
-        print B.T * B
+            basis = hstack((basis, P * besty))
 
         return basis[sub_dims,1:], zeros((kern_dim_minus_one))
 
@@ -185,9 +176,12 @@ def detect_LC_from_kernel(g, kernel_basis, eps = 1e-4):
         for u in xrange(g.v):
             if u in t or len(v_cc[u]) > 0:
                 continue
-            if matrix_rank(kernel_basis[t+[u],:], eps*0.1) <= g.d+1:
+            r = matrix_rank(kernel_basis[t+[u],:], eps*0.1)
+            if r <= g.d+1:
                 cc[cn].append(u)
                 v_cc[u].add(cn)
+#            else:
+#                print "invalid rank: ", r
 
         while 1:
             to_remove = []

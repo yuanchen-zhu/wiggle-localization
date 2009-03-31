@@ -86,7 +86,7 @@ def svd_conv(m):
 
 def matrix_rank(m, eps = S.EPS):
     u, s, vh = svd(m)
-    return len(s[s > eps])
+    return len(s[abs(s) > eps])
           
         
 def random_p(v, d, sample_space_pred):
