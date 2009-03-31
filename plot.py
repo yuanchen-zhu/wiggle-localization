@@ -235,7 +235,7 @@ def plot_info(g, L_opt_p, tri, dim_T, tang_var, stress_var, stress_spec, perturb
                   "Error")
 
     save(fn+'-summary')
-    os.system("gnome-open %s-summary.pdf" %fn)
+    os.system("evince %s-summary.pdf&" %fn)
 
     #draw tangent or stress var
     fs = (S.sPLOT_SIZE,S.sPLOT_SIZE)

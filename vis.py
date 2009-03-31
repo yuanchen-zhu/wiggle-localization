@@ -9,6 +9,7 @@ from OpenGL.GLU import *
 from OpenGL.GL import *
 from arcball import ArcBall
 import pickle
+import sys
 
 class Conf:
     pass
@@ -166,4 +167,7 @@ class VisCanvas(GLCanvas):
     	self.SwapBuffers()
 
 if __name__ == '__main__':
-    Visualize("none-rigid", 0, 4)
+    if len(sys.argv) > 1:
+        visualize(sys.argv[1], 0, 1)
+    else:
+        visualize("none-rigid", 0, 4)

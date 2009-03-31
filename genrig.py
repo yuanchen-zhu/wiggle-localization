@@ -59,7 +59,7 @@ class GenericRigidity:
                 w /= norm(w)
                 
                 omega = stress.matrix_from_vector(w, E, v)
-                kern, oev = stress.kernel(omega)
+                kern, oev = stress.Kernel(omega).extract()
                 if dim_K > kern.shape[1]+1:
                     dim_K = kern.shape[1]+1
                     self.K_basis = kern
@@ -94,9 +94,14 @@ class GenericSubstressRigidity:
         n = 0
         nz = 0
         for i in xrange(v):
-            B, s, misdim = substress.calculate_exact_space(g, Es[i], Vs[i], p)
+            try:
+                B, s, misdim = substress.calculate_exact_space(g, Es[i], Vs[i], p)
+            except substress.TooFewSamples:
+                B = zeros((0,0))
 
             sub_S_basis.append(B)
+
+            
             nz += B.shape[0] * B.shape[1]
             n += B.shape[1]
             sys.stdout.write('.')
@@ -109,7 +114,9 @@ class GenericSubstressRigidity:
         ss = stress.sample(S_basis)
 
 
-        K_basis, stress_spec = stress.sample_kernel(g, ss, True, 1e-5)
+        kern = stress.sample_kernel(g, ss)
+        K_basis, stress_spec = kern.extract(eps=1e-5)
+        #K_basis, stress_spec = stress.sample_kernel(g, ss, True, 1e-5)
 
         self.K_basis = K_basis
         self.dim_K = K_basis.shape[1]

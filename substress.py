@@ -24,6 +24,9 @@ def estimate_space(Ls, g, edge_idx, vtx_idx = None):
     edge_idx is a 1-d array of edge indices. Only the indexed edges
     have the correponding components of the stress space calculated.
     """
+    if len(edge_idx) == 0:
+        raise TooFewSamples()
+    
     u, s, vh = svd_conv(Ls[edge_idx, :]) # dense
 
     if vtx_idx != None:
@@ -53,6 +56,10 @@ def estimate_space(Ls, g, edge_idx, vtx_idx = None):
 
 
 def calculate_exact_space(g, edge_idx, vtx_idx = None, replaceP = None):
+
+    if len(edge_idx) == 0:
+        raise TooFewSamples()
+    
     E = g.E
     if replaceP == None:
         p = g.p
@@ -61,6 +68,11 @@ def calculate_exact_space(g, edge_idx, vtx_idx = None, replaceP = None):
     if vtx_idx == None:
         vtx_idx = affected_vertices(E, edge_idx)
     v = len(vtx_idx)
+
+    # sanity check for subgraph
+    sub_dim_T = locally_rigid_rank(v, g.d)
+    if sub_dim_T > len(edge_idx):
+        raise TooFewSamples()
 
     r = ridx(vtx_idx, g.v)
 
@@ -81,16 +93,22 @@ def estimate_space_from_subgraphs(Ls, g, Vs, Es):
     nz = 0
     missing_stress = []
     for i in xrange(v):
-        if S.EXACT_STRESS:
-            basis, s, misdim = calculate_exact_space(g, Es[i], Vs[i])
-        else:
-            basis, s, misdim = estimate_space(Ls, g, Es[i], Vs[i])
+        try:
+            if S.EXACT_STRESS:
+                basis, s, misdim = calculate_exact_space(g, Es[i], Vs[i])
+            else:
+                basis, s, misdim = estimate_space(Ls, g, Es[i], Vs[i])
 
-        sub_S_basis.append(basis)
-        missing_stress.append(misdim)
-        
-        nz += sub_S_basis[i].shape[0] * sub_S_basis[i].shape[1]
-        n += sub_S_basis[i].shape[1]
+            sub_S_basis.append(basis)
+            missing_stress.append(misdim)
+        except TooFewSamples:
+            sub_S_basis.append(zeros((0,0)))
+            missing_stress.append(0)
+
+        j = len(sub_S_basis) - 1;
+        nz += sub_S_basis[j].shape[0] * sub_S_basis[j].shape[1]
+        n += sub_S_basis[j].shape[1]
+
         sys.stdout.write('.')
         sys.stdout.flush()
     sys.stdout.write('\n')

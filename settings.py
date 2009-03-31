@@ -8,16 +8,17 @@ sPLOT_SIZE = 5
 sMARGIN = 0.06
 sSKIP_PLOT = False
 sENUMERATE_GLC = False
+sDUMP_LC = False
 
 ######################################################################
-# Simulation parameters controlling inputs to the simulation
+# Simulation parameters controlling input fed to the simulation
 ######################################################################
 
-RANDOM_SEED = 14
+RANDOM_SEED = 0
 
 # If non-null, specifies the floor plan file used for testing. Must be
 # in MITquest XML format.
-FLOOR_PLAN_FN =  "space.xml?10-2"
+FLOOR_PLAN_FN = "space.xml?10-2"
 
 # Number of vertices of the initiallly generated graph. The actual
 # graph used for testing however will be pruned further depending on
@@ -28,7 +29,7 @@ PARAM_V = 200
 PARAM_D = 2
 
 # List of std. dev noises to test
-PARAM_NOISE_STD = 1e-4
+PARAM_NOISE_STD = 0
 
 # Whether measurement noise is multiplicative or not
 MULT_NOISE = False
@@ -56,7 +57,7 @@ MAX_DEGREE = 9
 
 # Whether to prune the generated graph so only one globally linked
 # component is left.
-SINGLE_LC = True
+SINGLE_LC = False
 
 # Whether to filter out dangling vertices and components. The
 # filtering is simpe minded, but increases likely hood of the graph
@@ -78,10 +79,10 @@ FILTER_DANGLING = True
 # samples are then calculated as sums of random samples from each
 # local stress space, i.e., the global stress space is never
 # calculated.
-STRESS_SAMPLE = 'semilocal'
+STRESS_SAMPLE = 'global'
 
 # Whether to use exact stress space from coordinates
-EXACT_STRESS = True
+EXACT_STRESS = False
 
 # Whether to trilaterate
 TRILATERATION = False
@@ -95,7 +96,7 @@ PARAM_PERTURB = 20
 PARAM_SAMPLINGS = 4
 
 # Minimal perturbation standard deviation
-PARAM_MIN_PERTURB =  1e-8
+PARAM_MIN_PERTURB =  1e-12
 
 # Number of stress space samples, i.e., the number of stress matrix
 # samples.
@@ -103,10 +104,13 @@ SS_SAMPLES = 200
 
 # The number of coordinate vectors used to reconstruct the
 # configuration equals this number times the actual dimension of the
-# configuration. If 0, then the least square solver will be used,
+# configuration. If MAX=0, then the least square solver will be used,
 # using d coordinate vectors.
-SDP_SAMPLE = 1
 SDP_SAMPLE_MIN = 1
+SDP_SAMPLE_MAX = 1
+SDP_SAMPLE = 1
+SDP_SAMPLE_RATIO = 0.7
+SDP_SAMPLE_ENUMERATE = False
 
 # When STRESS_SAMPLE = semilocal | local, each vertex together with
 # its K_RING-ring is considered as the starting point of each local

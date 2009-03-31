@@ -214,7 +214,8 @@ def optimal_linear_transform_for_l_sdp(p, d, E, l):
     order.sort(key = lambda i: -e[i]) # e[order] is sorted in descreasing value
     print_info("Transformation matrix eigenvalues: %s" % str(e[order]))
     print_info("Transformation matrix id: %s" % str(order))
-    return asmatrix(dot(diag(e[order[:d]]), v.T[order[:d],:]))
+    return asmatrix(dot(diag(e[order[:d]]), v.T[order[:d],:])), asmatrix(dot(diag(e[order]), v.T[order,:]))
+
 
 
 def intersect2d(t, u, v, w):

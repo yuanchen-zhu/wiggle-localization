@@ -35,7 +35,9 @@ def assign_S(i):
     S.PARAM_V =  200
     S.RANDOM_SEED =  0
     S.RANDOM_STRESS =  True
-    S.SDP_SAMPLE =  2
+    S.SDP_SAMPLE_RATIO = 0.5
+    S.SDP_SAMPLE_MIN = 1
+    S.SDP_SAMPLE_MAX =  2
     S.SDP_USE_DSDP =  True
     S.SINGLE_LC =  True
     S.SS_SAMPLES =  200
@@ -47,7 +49,8 @@ def assign_S(i):
     S.FLOOR_PLAN_FN = gtype[i]
     S.MAX_DEGREE = gdeg[i]
     S.SS_SAMPLES = sss[i]
-    S.SDP_SAMPLE = gsdps[i]
+    S.SDP_SAMPLE_MAX = S.SDP_SAMPLE_MIN = gsdps[i]
+    S.SDP_SAMPLE_RATIO = 0.5
     S.PARAM_PERTURB = perturbs[i]
     S.PARAM_NOISE_STD = noise[i]
     S.PARAM_SAMPLINGS = samplings[i]
@@ -148,9 +151,10 @@ def vary_D():
         gp.flush()
 
         f = open(fn, 'w')
-        for S.SDP_SAMPLE in [1,2,3,4,5,6,7]:
+        for S.SDP_SAMPLE_MAX in [1,2,3,4,5,6,7]:
+            S.SDP_SAMPLE_MIN = S.SDP_SAMPLE_MAX
             error_p, error_d = dist.simulate()
-            f.write("%g %g %g %g %g\n" % (int(S.SDP_SAMPLE * 2), error_p, error_d, error_p * S.meter_ratio(), error_d * S.meter_ratio()))
+            f.write("%g %g %g %g %g\n" % (int(S.SDP_SAMPLE_MAX * 2), error_p, error_d, error_p * S.meter_ratio(), error_d * S.meter_ratio()))
             f.flush()
         f.close()
     gp.close()
@@ -183,7 +187,8 @@ def e4():
 
 def different_sdp():
     global S
-    for S.SDP_SAMPLE in [1, 2, 3, 4]:
+    for S.SDP_SAMPLE_MAX in [1, 2, 3, 4]:
+        S.SDP_SAMPLE_MIN = S.SDP_SAMPLE_MAX
         dist.simulate()
 
 def varying_v():
@@ -206,7 +211,8 @@ def varying_v():
     S.PARAM_V =  200
     S.RANDOM_SEED =  0
     S.RANDOM_STRESS =  True
-    S.SDP_SAMPLE =  2
+    S.SDP_SAMPLE_MAX = S.SDP_SAMPLE_MIN =  2
+    S.SDP_SAMPLE_RATIO = 0.5
     S.SDP_USE_DSDP =  True
     S.SINGLE_LC =  True
     S.SS_SAMPLES =  200
@@ -226,7 +232,7 @@ def varying_v():
     sdps = [2, 2, 2, 2, 3, 3, 3]
     i = 0
     for S.PARAM_V in [50, 70, 100, 141, 200, 283, 400]:
-        S.SDP_SAMPLE =sdps[i]
+        S.SDP_SAMPLE_MAX = S.SDP_SAMPLE_MIN =sdps[i]
         error_p, error_d = dist.simulate()
         f.write("%g %g %g %g %g %g\n" % (S.PARAM_V, error_p, error_d, error_p * S.meter_ratio(), error_d * S.meter_ratio(), dist.NS))
         f.flush()

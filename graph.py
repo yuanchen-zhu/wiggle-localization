@@ -132,7 +132,7 @@ def filter_dangling_v(g):
     while 1:
         ov = g.v
         adj = g.adj
-        g = subgraph(g, [i for i in xrange(g.v) if len(adj[i]) > g.d])
+        g = subgraph(g, [i for i in xrange(g.v) if len(adj[i]) >= g.d])
         if g.v == ov:
             break
     return g

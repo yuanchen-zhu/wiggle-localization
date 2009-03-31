@@ -67,6 +67,7 @@ def dump_settings():
     for s in ss:
         print_info("\t%s :  %s" % (s[0], s[1]))
 
+
 def get_settings_hash():
     import settings
     h = hash(tuple(get_module_consts(settings)))
