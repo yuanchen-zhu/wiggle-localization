@@ -53,10 +53,12 @@ class GenericRigidity:
             rigidity_rank = max(rigidity_rank, len(s[s >= eps]))
 
             stress_basis = u[:,rigidity_rank:]
+            
             for y in xrange(stress_iter):
                 w = stress_basis * asmatrix(random.random((e - rigidity_rank, 1)))
-                
-                w /= norm(w)
+
+                if norm(w) > eps:
+                    w /= norm(w)
                 
                 omega = stress.matrix_from_vector(w, E, v)
                 kern, oev = stress.Kernel(omega).extract()

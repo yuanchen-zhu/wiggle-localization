@@ -246,7 +246,7 @@ def graph_scale(g, perturb, noise_std):
         tm_subg += tm.elapsed()
         
         tm.restart()
-        sub_K, s = kern.extract_sub(lc, g.d * S.SDP_SAMPLE_MAX)
+        sub_K, s = kern.extract_sub(lcs, i, g.d * S.SDP_SAMPLE_MAX)
         print s[:g.d * S.SDP_SAMPLE_MAX]
         tm_pca = tm_pca + tm.elapsed()
 

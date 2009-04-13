@@ -45,7 +45,8 @@ def plot_info(g, L_opt_p, tri, dim_T, tang_var, stress_var, stress_spec, perturb
         else:
             loglog()
 
-        plot(xrange(1, 1 + len(stress_spec)), stress_spec)
+
+        plot(xrange(1, 1 + len(stress_spec)), stress_spec+S.EPS)
         axvline(g.gr.dim_K-1)
         gca().set_aspect('auto')
 

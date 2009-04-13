@@ -14,11 +14,12 @@ sDUMP_LC = False
 # Simulation parameters controlling input fed to the simulation
 ######################################################################
 
-RANDOM_SEED = 2
+RANDOM_SEED = 0
 
 # If non-null, specifies the floor plan file used for testing. Must be
 # in MITquest XML format.
-FLOOR_PLAN_FN = "space.xml?10-2"
+#FLOOR_PLAN_FN = "space.xml?10-2"
+FLOOR_PLAN_FN = None
 
 # Number of vertices of the initiallly generated graph. The actual
 # graph used for testing however will be pruned further depending on
@@ -29,13 +30,14 @@ PARAM_V = 200
 PARAM_D = 2
 
 # List of std. dev noises to test
-PARAM_NOISE_STD = 0
+PARAM_NOISE_STD = 1e-4
 
 # Whether measurement noise is multiplicative or not
 MULT_NOISE = False
 
 # Threshold controlling the longest edge in the generated graph.
 PARAM_DIST_THRESHOLD = 5
+#PARAM_DIST_THRESHOLD = 1
 
 # The length of the longest edge in the graph measured in meters. This
 # is only useful for printing testing results in real-world units.
@@ -107,8 +109,8 @@ SS_SAMPLES = 200
 # configuration. If MAX=0, then the least square solver will be used,
 # using d coordinate vectors.
 SDP_SAMPLE_MIN = 1
-SDP_SAMPLE_MAX = 1
-SDP_SAMPLE = 1
+SDP_SAMPLE_MAX = 4
+SDP_SAMPLE = 4
 SDP_SAMPLE_RATIO = 0.7
 SDP_SAMPLE_ENUMERATE = False
 
