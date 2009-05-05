@@ -26,7 +26,10 @@ def L_map(p, E, noise_std):
     """
     v = asarray(p[:, E[:,0]] - p[:, E[:,1]])
     d = sqrt((v * v).sum(axis=0))
-    noise = random.randn(len(E)) * noise_std
+    if noise_std > S.EPS:
+        noise = random.normal(loc = 0.0, scale=noise_std, size=(len(E)))
+    else:
+        noise = zeros((len(E)))
     if S.MULT_NOISE:
         d *= (1 + noise)
     else:

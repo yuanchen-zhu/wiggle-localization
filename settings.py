@@ -9,6 +9,7 @@ sMARGIN = 0.06
 sSKIP_PLOT = False
 sENUMERATE_GLC = False
 sDUMP_LC = False
+sPLOT_POINT_SIZE = 10
 
 ######################################################################
 # Simulation parameters controlling input fed to the simulation
@@ -18,8 +19,8 @@ RANDOM_SEED = 0
 
 # If non-null, specifies the floor plan file used for testing. Must be
 # in MITquest XML format.
-#FLOOR_PLAN_FN = "space.xml?10-2"
-FLOOR_PLAN_FN = None
+FLOOR_PLAN_FN = "space.xml?10-2"
+#FLOOR_PLAN_FN = None
 
 # Number of vertices of the initiallly generated graph. The actual
 # graph used for testing however will be pruned further depending on
@@ -30,7 +31,7 @@ PARAM_V = 200
 PARAM_D = 2
 
 # List of std. dev noises to test
-PARAM_NOISE_STD = 1e-4
+PARAM_NOISE_STD = 1e-3
 
 # Whether measurement noise is multiplicative or not
 MULT_NOISE = False
@@ -90,6 +91,7 @@ EXACT_STRESS = False
 TRILATERATION = False
 
 # perturb-to-noise ratios to test
+# Set this to 80 for low noise (1e-4) and 20 for high noise (1e-3)
 PARAM_PERTURB = 20
 
 # The number of perturbed L measurement samples to be taken is the
@@ -110,9 +112,7 @@ SS_SAMPLES = 200
 # using d coordinate vectors.
 SDP_SAMPLE_MIN = 1
 SDP_SAMPLE_MAX = 4
-SDP_SAMPLE = 4
-SDP_SAMPLE_RATIO = 0.7
-SDP_SAMPLE_ENUMERATE = False
+SDP_SAMPLE_ENUMERATE_THRESHOLD = 20
 
 # When STRESS_SAMPLE = semilocal | local, each vertex together with
 # its K_RING-ring is considered as the starting point of each local

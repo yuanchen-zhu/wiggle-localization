@@ -86,17 +86,22 @@ class Kernel:
             norm_J = norm(J)
             norm_sigma = norm(self.sigma)
             M = J
-            if norm_J > eps:
-                M = M / norm_J
-            if norm_sigma > eps:
-                M = M + self.sigma / norm_sigma
-            else:
-                M = M + self.sigma
 
-            s, u = eigh(M)
+            if norm_J > eps:
+                nJ = J / norm_J
+            else:
+                nJ = J
+            if norm_sigma > eps:
+                nsigma = self.sigma / norm_sigma
+            else:
+                nsigma = self.sigma
+
+            s, u = eigh(nJ.T * nJ + nsigma.T * nsigma)
             C1 = asmatrix(u)[:, abs(s) < eps]
 
             C = hstack((C0, C1))
+            print_info("dim(C)=%s" % str(C.shape))
+            
 
             if C.shape[1] > 0:
                 u, s, vt = svd(C)
@@ -149,9 +154,9 @@ class Kernel:
                 n = norm((P * y0)[sub_dims,:])
                 if n > eps:
 
-                    y = y0/n
+                    y = (P * y0)/n
                     
-                    ss = abs((y.T * S_bar * y)[0,0])
+                    ss = abs((y.T * self.sigma * y)[0,0])
                     if  ss < mins:
                         #print_info("Picked:\n\tnorm(J P y0)=%g\n\tnorm(S_bar y0)=%g\n\teigval=%s\n\teigvec_is_complex=%s\n\ty^t S_bar y = %s"
                         #           % (n, abs(norm(S_bar * y0)), str(v), str(norm(imag(y0)) > eps), str(ss)))
@@ -176,7 +181,7 @@ class Kernel:
             if k == None:
                 break
 
-            basis = hstack((basis, P * besty))
+            basis = hstack((basis, besty))
 
         return basis[sub_dims,1:], zeros((kern_dim_minus_one))
 
@@ -278,18 +283,3 @@ def sample_kernel(g, ss):
         ass += o.T * o
 
     return Kernel(ass)
-
-#     if auto_dim_K:
-#       return Kernel(as).
-#     kernel(as, None, eps)
-#     else:
-#         if S.STRESS_SAMPLE == 'semilocal':
-#             mdk = g.gsr.dim_K - 1
-#         else:
-#             mdk = g.gr.dim_K - 1
-        
-#         #return kernel(as, int(mdk * S.SDP_SAMPLE), eps)
-#         return kernel(as, max(int(g.d * S.SDP_SAMPLE_MAX), mdk), eps)
-#         #return kernel(as, v-1, eps)
-#         #return kernel(as, mdk + int(g.d * (S.SDP_SAMPLE-1)), eps)
-#         #return kernel(as, mdk, eps)

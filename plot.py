@@ -67,8 +67,8 @@ def plot_info(g, L_opt_p, tri, dim_T, tang_var, stress_var, stress_spec, perturb
                ('+', 1),
                ('x', 1)]
     markers = [('o', 0)]
-    point_size = 4*math.sqrt(30)/math.sqrt(v)
-    line_width = point_size * 0.25
+    point_size = S.sPLOT_POINT_SIZE*math.sqrt(30)/math.sqrt(v)
+    line_width = point_size * 0.5
 
     def draw_geometry2d(rect, t = None):
         axes(rect)

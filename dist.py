@@ -62,15 +62,20 @@ def random_graph(v, d, max_dist, min_dist, max_degree):
     print_info("Create random graph...")
     param_hash = hash((v, d, max_dist, min_dist, max_degree, S.FLOOR_PLAN_FN, S.FILTER_DANGLING, S.SINGLE_LC, S.RANDOM_SEED))
     cache_fn = "%s/graph-%d.cache" % (S.DIR_CACHE, param_hash)
-    g = None
 
-    try:
-        f = open(cache_fn, "r")
-        g = cPickle.load(f)
-        print_info("\tRead from graph cache %s" % cache_fn)
-        f.close()
-    except IOError:
-        print_info("\tError reading from graph cache %s. Generating graph " % cache_fn)
+
+    def load():
+        try:
+            f = open(cache_fn, "r")
+            g = cPickle.load(f)
+            print_info("\tRead from graph cache %s" % cache_fn)
+            f.close()
+            return g
+        except IOError:
+            print_info("\tError reading from graph cache %s. Generating graph " % cache_fn)
+            return None
+
+    g = load()
 
     if g == None:
         if S.FLOOR_PLAN_FN:
@@ -100,12 +105,13 @@ def random_graph(v, d, max_dist, min_dist, max_degree):
 
         if S.SINGLE_LC:
 
-            lcs = stress.detect_LC_from_kernel(g, g.gr.K_basis)
-            g = subgraph(g, lcs[0])
-            g.gr = GenericRigidity(g.v, g.d, g.E)
-            if g.gr.type != 'G':
-                import os
-                os.system("echo %d >> glc-non-ggr" % S.RANDOM_SEED)
+            while True:
+                lcs = stress.detect_LC_from_kernel(g, g.gr.K_basis)
+                largest_lc_id = argmax(array(map(lambda lc: len(lc), lcs), 'i'))
+                g = subgraph(g, lcs[largest_lc_id])
+                g.gr = GenericRigidity(g.v, g.d, g.E)
+                if g.gr.type == 'G':
+                    break
 
         g.floor_plan = floor_plan
         f = open(cache_fn, "w")
@@ -118,6 +124,7 @@ def random_graph(v, d, max_dist, min_dist, max_degree):
     print_info("\t|V|=%d\n\t|E|=%d\n\tMeanDegree=%g (%g)" % (g.v, g.e, 2.0 * float(g.e)/float(g.v), md))
     print_info('\ttype = %s\n\trigidity matrix rank = %d  (max = %d)\n\tstress kernel dim = %d (min = %d)'
                % (g.gr.type, g.gr.dim_T, locally_rigid_rank(g.v, d), g.gr.dim_K, d + 1))
+
     return g
 
 def measure_L(g, perturb, noise_std, n_samples):
@@ -259,14 +266,11 @@ def graph_scale(g, perturb, noise_std):
             best_T = None
             rlc = array(ridx(lc, g.v))
 
-            if S.SDP_SAMPLE_ENUMERATE:
+            
+            if len(lc) <= S.SDP_SAMPLE_ENUMERATE_THRESHOLD:
                 sdps_list =  xrange(int(round(g.d * S.SDP_SAMPLE_MIN)), int(round(g.d * S.SDP_SAMPLE_MAX))+1)
             else:
-                tt = math.log(len(lc)) * S.SDP_SAMPLE_RATIO
-                tt = min(max(tt, S.SDP_SAMPLE_MIN), S.SDP_SAMPLE_MAX)
-                sdps_list = [int(round(g.d * tt))]
-
-            sdps_list=[int(round(g.d * S.SDP_SAMPLE))]
+                sdps_list = [int(round(g.d * S.SDP_SAMPLE_MAX))]
 
             for sdps in sdps_list:
                 

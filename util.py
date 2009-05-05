@@ -82,7 +82,7 @@ def svd_conv(m):
             u, s, vh = svd(m)
             return u, s, vh
         except LinAlgError:
-            m = m + random.randn(m.shape[0], m.shape[1]) * 1e-20
+            m = m + random.uniform(-1e-20, 1e-20, m.shape)
 
 def matrix_rank(m, eps = S.EPS):
     u, s, vh = svd(m)
