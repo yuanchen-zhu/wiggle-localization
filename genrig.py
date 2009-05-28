@@ -18,7 +18,7 @@ def rigidity_matrix(v, d, E, p = None):
         D[k, j*d:j*d+d] = -2.0 * diff_ij.T
     return D
 
-def L_map(p, E, noise_std):
+def L_map(p, E, noise_std, mult_noise):
     """
     p is d x n and encodes n d-dim points. E is k x 2 and encodes the
     edge set. Returns k-dim column vector containing the squared
@@ -30,7 +30,7 @@ def L_map(p, E, noise_std):
         noise = random.normal(loc = 0.0, scale=noise_std, size=(len(E)))
     else:
         noise = zeros((len(E)))
-    if S.MULT_NOISE:
+    if mult_noise:
         d *= (1 + noise)
     else:
         d += noise
@@ -64,7 +64,7 @@ class GenericRigidity:
                     w /= norm(w)
                 
                 omega = stress.matrix_from_vector(w, E, v)
-                kern, oev = stress.Kernel(omega).extract()
+                kern, oev = stress.Kernel(omega).extract(d)
                 if dim_K > kern.shape[1]+1:
                     dim_K = kern.shape[1]+1
                     self.K_basis = kern
@@ -87,7 +87,7 @@ class GenericRigidity:
 
 
 class GenericSubstressRigidity:
-    def __init__(self, g, Vs, Es, eps = S.EPS):
+    def __init__(self, g, Vs, Es, params, eps = S.EPS):
         import sys
         print_info('Calculating generic rigidity using substresses...')
 
@@ -115,14 +115,14 @@ class GenericSubstressRigidity:
         sys.stdout.write('\n')
         sparse_param = (e, n, nz, Es)
 
-        S_basis, stress_var = substress.consolidate(g.gr.dim_T, sub_S_basis, sparse_param)
-        ss = stress.sample(S_basis)
+        S_basis, stress_var = substress.consolidate(g.gr.dim_T, sub_S_basis, sparse_param, params)
+        ss = stress.sample(S_basis, params)
 
 
         kern = stress.sample_kernel(g, ss)
-        K_basis, stress_spec = kern.extract(eps=1e-5)
+        K_basis, stress_spec = kern.extract(g.d, eps=1e-5)
         #K_basis, stress_spec = stress.sample_kernel(g, ss, True, 1e-5)
 
         self.K_basis = K_basis
         self.dim_K = K_basis.shape[1]
-        print_info('\tstress kernel dim = %d (min = %d)' % (self.dim_K, g.d + 1))
+        print_info('\tstress kernel dim = %d (min = %d)' % (self.dim_K, g.d))

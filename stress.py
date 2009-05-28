@@ -4,7 +4,6 @@ from util import *
 from scipy.linalg.basic import *
 import sys
 import genrig
-from symeig import symeig
 
 def estimate_space(Ls, dim_T):
     u, s, vh = svd(Ls)              # dense
@@ -17,21 +16,21 @@ def calculate_exact_space(g):
     return u[:,t:], s
 
             
-def sample(S_basis):
+def sample(S_basis, params):
     n_S = S_basis.shape[1]
-    nss = min(n_S, S.SS_SAMPLES)
+    nss = min(n_S, params.SS_SAMPLES)
 
     print_info("Get random stresses...")
 
-    if S.RANDOM_STRESS:
+    if params.RANDOM_STRESS:
         ss = asmatrix(S_basis) * asmatrix(random.random((n_S, nss+nss/2)))
-        if S.ORTHO_SAMPLES:
+        if params.ORTHO_SAMPLES:
             if ss.shape[0] != 0 and ss.shape[1] != 0:
                 ss = svd(ss)[0]
         return ss[:,:nss]
     else:
         # take the last SS_SAMPLES stress vectors in S_basis
-        return S_basis[:,n_S-S.SS_SAMPLES:]
+        return S_basis[:,n_S-params.SS_SAMPLES:]
 
 def matrix_from_vector(w, E, v):
     O = asmatrix(zeros((v,v), 'd'))
@@ -61,8 +60,9 @@ class Kernel:
         self.eigval = self.eigval[order]
         self.eigvec = self.eigvec[:, order]
         
-    def extract(self, eps = S.EPS):
+    def extract(self, d, eps = S.EPS):
         kd = len(self.eigval[self.eigval < eps])
+        kd = max(kd, d+1)
         return self.eigvec[:,1:kd], self.eigval[1:]
 
     def extract_sub(self, lcs, cur_lc_id, kern_dim_minus_one, eps = S.EPS):
@@ -71,9 +71,21 @@ class Kernel:
         if len(sub_dims) == 1:
             return zeros((1, kern_dim_minus_one), 'd'), zeros((1,1), 'd')
 
+        #SS = matrix(self.sigma)
+        #for i in xrange(self.v):
+        #    if not (i in lcs):
+        #        SS[i,:] = 0
+        #        SS[:,i] = 0
+                
+
+        #for i in xrange(self.v):
+        #    SS[i,i] = sum(SS[i, 
+                
+
         basis = asmatrix(ones(((self.v), 1), 'd'))
         for i in xrange(kern_dim_minus_one):
-            print_info("\nSearching for sub kernel basis No. %d:" % (i+1))
+            #print_info("\nSearching for sub kernel basis No. %d:" % (i+1))
+            
 
             J = asmatrix(zeros((self.v, self.v), 'd'))
             for v in sub_dims:
@@ -85,7 +97,6 @@ class Kernel:
 
             norm_J = norm(J)
             norm_sigma = norm(self.sigma)
-            M = J
 
             if norm_J > eps:
                 nJ = J / norm_J
@@ -96,11 +107,12 @@ class Kernel:
             else:
                 nsigma = self.sigma
 
-            s, u = eigh(nJ.T * nJ + nsigma.T * nsigma)
+            #s, u = eigh(nJ.T * nJ + nsigma.T * nsigma)
+            s, u = eigh(nJ + nsigma)
             C1 = asmatrix(u)[:, abs(s) < eps]
 
             C = hstack((C0, C1))
-            print_info("dim(C)=%s" % str(C.shape))
+            #print_info("dim(C)=%s" % str(C.shape))
             
 
             if C.shape[1] > 0:
@@ -130,9 +142,9 @@ class Kernel:
             J_bar_rank = matrix_rank(J_bar)
             S_bar_rank = matrix_rank(S_bar)
 
-            print_info("dim(J_bar)=dim(S_bar)=%s" % str(J_bar.shape))
-            print_info("rank(J_bar)=%d" % J_bar_rank)
-            print_info("rank(S_bar)=%d" % S_bar_rank)
+            #print_info("dim(J_bar)=dim(S_bar)=%s" % str(J_bar.shape))
+            #print_info("rank(J_bar)=%d" % J_bar_rank)
+            #print_info("rank(S_bar)=%d" % S_bar_rank)
 
             val, vec = eig(a=S_bar, b=J_bar)
             
@@ -155,7 +167,10 @@ class Kernel:
                 if n > eps:
 
                     y = (P * y0)/n
+                    y0 = zeros(y.shape, 'd')
+                    y0[sub_dims,:] = y[sub_dims, :]
                     
+                    #ss = abs((y0.T * self.sigma * y0)[0,0])
                     ss = abs((y.T * self.sigma * y)[0,0])
                     if  ss < mins:
                         #print_info("Picked:\n\tnorm(J P y0)=%g\n\tnorm(S_bar y0)=%g\n\teigval=%s\n\teigvec_is_complex=%s\n\ty^t S_bar y = %s"
@@ -177,7 +192,7 @@ class Kernel:
                     #           % (n, abs(norm(S_bar * y0)), str(v), str(norm(imag(y0)) > eps)))
                      
 
-            print_info("Picked: %d\tDiscarded: %d\tImaginary: %d\t Zero Norm: %d" % (n_picked, n_discarded, n_imag_discarded, n_zero_norm_discarded))
+            #print_info("Picked: %d\tDiscarded: %d\tImaginary: %d\t Zero Norm: %d" % (n_picked, n_discarded, n_imag_discarded, n_zero_norm_discarded))
             if k == None:
                 break
 

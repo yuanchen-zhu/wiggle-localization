@@ -58,9 +58,16 @@ def build_edgeset(p, max_dist, min_dist, max_degree, pred):
     return array(list(E), 'i')
 
 
-def random_graph(v, d, max_dist, min_dist, max_degree):
+def random_graph(params):
     print_info("Create random graph...")
-    param_hash = hash((v, d, max_dist, min_dist, max_degree, S.FLOOR_PLAN_FN, S.FILTER_DANGLING, S.SINGLE_LC, S.RANDOM_SEED))
+
+    v = params.V
+    d = params.D
+    max_dist = params.dist_threshold()
+    min_dist = params.dist_threshold() * 0.05
+    max_degree = params.MAX_DEGREE
+    
+    param_hash = hash((v, d, max_dist, min_dist, max_degree, params.FLOOR_PLAN_FN, params.SINGLE_LC, params.RANDOM_SEED))
     cache_fn = "%s/graph-%d.cache" % (S.DIR_CACHE, param_hash)
 
 
@@ -78,8 +85,8 @@ def random_graph(v, d, max_dist, min_dist, max_degree):
     g = load()
 
     if g == None:
-        if S.FLOOR_PLAN_FN:
-            floor_plan = Floorplan("%s/%s" % (S.DIR_DATA, S.FLOOR_PLAN_FN))
+        if params.FLOOR_PLAN_FN:
+            floor_plan = Floorplan("%s/%s" % (S.DIR_DATA, params.FLOOR_PLAN_FN))
             vpred = lambda p: floor_plan.inside(p)
             epred = lambda p, q: not floor_plan.intersect(p, q)
         else:
@@ -91,19 +98,19 @@ def random_graph(v, d, max_dist, min_dist, max_degree):
         E = build_edgeset(p, max_dist, min_dist, max_degree, epred)
         g = Graph(p, E)
         print_info("|V|=%d |E|=%d" % (g.v, g.e))
-        if S.FILTER_DANGLING:
-            print_info("Filtering dangling vertices and components...")
-            while 1:
-                oldv = g.v
-                g = filter_dangling_v(g)
-                #g = largest_cc(g)
-                if oldv == g.v:
-                    break
-                print_info("\t|V|=%d |E|=%d" % (g.v, g.e))
+
+        
+        print_info("Filtering dangling vertices...")
+        while 1:
+            oldv = g.v
+            g = filter_dangling_v(g)
+            if oldv == g.v:
+                break
+            print_info("\t|V|=%d |E|=%d" % (g.v, g.e))
 
         g.gr = GenericRigidity(g.v, g.d, g.E)
 
-        if S.SINGLE_LC:
+        if params.SINGLE_LC:
 
             while True:
                 lcs = stress.detect_LC_from_kernel(g, g.gr.K_basis)
@@ -114,6 +121,13 @@ def random_graph(v, d, max_dist, min_dist, max_degree):
                     break
 
         g.floor_plan = floor_plan
+
+        # Calculate results from trilateration
+
+        print_info("Finding largest trilateration graph...")
+        g.tri = trilaterate_graph(g.adj)
+        print_info("\tsize = %d" % len(g.tri.localized))
+        
         f = open(cache_fn, "w")
         cPickle.dump(g, f)
         f.close()
@@ -121,21 +135,21 @@ def random_graph(v, d, max_dist, min_dist, max_degree):
         
     a = g.adj
     md = array(map(len, a), 'd').mean()
-    print_info("\t|V|=%d\n\t|E|=%d\n\tMeanDegree=%g (%g)" % (g.v, g.e, 2.0 * float(g.e)/float(g.v), md))
+    print_info("\t|V|=%d\n\t|E|=%d\n\tMeanDegree=%g (%g)" % (g.v, g.e, g.mean_degree(), md))
     print_info('\ttype = %s\n\trigidity matrix rank = %d  (max = %d)\n\tstress kernel dim = %d (min = %d)'
                % (g.gr.type, g.gr.dim_T, locally_rigid_rank(g.v, d), g.gr.dim_K, d + 1))
 
     return g
 
-def measure_L(g, perturb, noise_std, n_samples):
+def measure_L(g, perturb, noise_std, n_samples, mult_noise):
     print_info("#measurements = %d" % n_samples)
 
     Ls = asmatrix(zeros((g.e, n_samples), 'd'))
     for i in xrange(n_samples):
         delta = asmatrix(random.uniform(-perturb, perturb, (g.d, g.v)))
-        Ls[:,i] = L_map(g.p + delta, g.E, noise_std)
+        Ls[:,i] = L_map(g.p + delta, g.E, noise_std, mult_noise)
 
-    return Ls, L_map(g.p, g.E, noise_std), L_map(g.p, g.E, 0)
+    return Ls, L_map(g.p, g.E, noise_std, mult_noise), L_map(g.p, g.E, 0, mult_noise)
 
 NS = 0
 
@@ -162,7 +176,10 @@ def dump_graph(g, lc, T_q, fn):
         ff.close()
 
 
-def graph_scale(g, perturb, noise_std):
+class Stats:
+    pass
+
+def graph_scale(g, perturb, noise_std, params, output_params):
     tm = Timer()
     
     v, p, d, e, E = g.v, g.p, g.d, g.e, g.E
@@ -170,32 +187,32 @@ def graph_scale(g, perturb, noise_std):
 
     tang_var = None
     stress_var = None
-    if S.STRESS_SAMPLE == 'global':
-        n_samples = int(dim_T * S.PARAM_SAMPLINGS)
+    if params.STRESS_SAMPLE == 'global':
+        n_samples = int(dim_T * params.SAMPLINGS)
 
         tm.restart()
-        Ls, L, exactL = measure_L(g, perturb, noise_std, n_samples)
+        Ls, L, exactL = measure_L(g, perturb, noise_std, n_samples, params.MULT_NOISE)
         print_info("TIME (measure_L) = %gs" % tm.elapsed())
 
         tm.restart()
-        if S.EXACT_STRESS:
+        if params.EXACT_STRESS:
             S_basis, tang_var = stress.calculate_exact_space(g)
         else:
             S_basis, tang_var = stress.estimate_space(Ls, dim_T)
         print_info("TIME (estimate/calculate stress) = %gs" % tm.elapsed())
 
         tm.restart()
-        ss = stress.sample(S_basis) # get stress samples
+        ss = stress.sample(S_basis, params) # get stress samples
         print_info("TIME (sample stress) = %gs" % tm.elapsed())
         
     else:
         tm.restart()
-        Vs, Es = g.get_k_ring_subgraphs(S.K_RING, S.MIN_LOCAL_NBHD)
+        Vs, Es = g.get_k_ring_subgraphs(params.K_RING, params.MIN_LOCAL_NBHD)
         print_info("TIME (get_k_ring_subgraphs) = %gs" % tm.elapsed())
 
-        n_samples = int(max([len(vi) * d for vi in Vs]) * S.PARAM_SAMPLINGS)
+        n_samples = int(max([len(vi) * d for vi in Vs]) * params.SAMPLINGS)
         tm.restart()
-        Ls, L, exactL = measure_L(g, perturb, noise_std, n_samples)
+        Ls, L, exactL = measure_L(g, perturb, noise_std, n_samples, params.MULT_NOISE)
         print_info("TIME (measure_L) = %gs" % tm.elapsed())
 
         
@@ -204,27 +221,28 @@ def graph_scale(g, perturb, noise_std):
             Ls = Ls,
             g = g,
             Vs = Vs,
-            Es = Es)
+            Es = Es,
+            params = params)
         print_info("TIME (estimate_space_from_subgraphs) = %gs" % tm.elapsed())
 
-        if S.STRESS_SAMPLE == 'semilocal':
+        if params.STRESS_SAMPLE == 'semilocal':
             tm.restart()
-            S_basis, stress_var = substress.consolidate(dim_T, sub_S_basis, sparse_param)
+            S_basis, stress_var = substress.consolidate(dim_T, sub_S_basis, sparse_param, params)
             print_info("TIME (consolidate) = %gs" % tm.elapsed())
 
             tm.restart()
-            ss = stress.sample(S_basis)
+            ss = stress.sample(S_basis, params)
             print_info("TIME (stress.sample) = %gs" % tm.elapsed())
 
-        elif S.STRESS_SAMPLE == 'local':
+        elif params.STRESS_SAMPLE == 'local':
             stress_var = zeros((1))
             tm.restart()
-            ss = substress.sample(sub_S_basis, sparse_param)
+            ss = substress.sample(sub_S_basis, sparse_param, params)
             print_info("TIME (substress.sample) = %gs" % tm.elapsed())
 
-    if S.STRESS_SAMPLE == 'semilocal':
+    if params.STRESS_SAMPLE == 'semilocal':
         tm.restart()
-        g.gsr = GenericSubstressRigidity(g, Vs, Es)
+        g.gsr = GenericSubstressRigidity(g, Vs, Es, params)
         print_info("TIME (Generic substress rigidity) = %gs" % tm.elapsed())
 
         tm.restart()
@@ -253,12 +271,11 @@ def graph_scale(g, perturb, noise_std):
         tm_subg += tm.elapsed()
         
         tm.restart()
-        sub_K, s = kern.extract_sub(lcs, i, g.d * S.SDP_SAMPLE_MAX)
-        print s[:g.d * S.SDP_SAMPLE_MAX]
+        sub_K, s = kern.extract_sub(lcs, i, g.d * params.SDP_SAMPLE_MAX)
         tm_pca = tm_pca + tm.elapsed()
 
         tm.restart()
-        if S.SDP_SAMPLE_MAX == 0:
+        if params.SDP_SAMPLE_MAX == 0:
             T, Tf = optimal_linear_transform_for_l_lsq(asmatrix(sub_K)[:, :g.d], d, sub_E, L[sub_E_idx])
         else:
             # enumerate through possible sdp_sample:
@@ -267,14 +284,15 @@ def graph_scale(g, perturb, noise_std):
             rlc = array(ridx(lc, g.v))
 
             
-            if len(lc) <= S.SDP_SAMPLE_ENUMERATE_THRESHOLD:
-                sdps_list =  xrange(int(round(g.d * S.SDP_SAMPLE_MIN)), int(round(g.d * S.SDP_SAMPLE_MAX))+1)
+            if len(lc) <= params.SDP_SAMPLE_ENUMERATE_THRESHOLD:
+                sdps_list =  xrange(int(round(g.d * params.SDP_SAMPLE_MIN)), int(round(g.d * params.SDP_SAMPLE_MAX))+1)
             else:
-                sdps_list = [int(round(g.d * S.SDP_SAMPLE_MAX))]
+                sdps_list = [int(round(g.d * params.SDP_SAMPLE_MAX))]
 
             for sdps in sdps_list:
                 
                 q = asmatrix(sub_K)[:, :sdps].T
+                #q = asmatrix(sub_K)[:, [min(2, sub_K.shape[1]-1]].T
                 if q.shape[0] < g.d:
                     q = vstack((q, zeros((g.d-q.shape[0], q.shape[1]))))
                 print_info("GLC #%d:" % (i+1))
@@ -293,11 +311,11 @@ def graph_scale(g, perturb, noise_std):
                 T_q = asmatrix(uu).T * Tf_q
                 T = (asmatrix(uu).T * Tf)[:d, :]
                 
-                if S.sDUMP_LC:
+                if output_params.DUMP_LC:
                     dump_graph(g, lc, T_q, "plot/%d-%d-%d.sub" % (i, len(lc), sdps))
 
                 T_q = T_q[:d,:]
-                l_error = norm(sqrt(exactL[sub_E_idx]) - sqrt(L_map(T_q, sub_E, 0)))
+                l_error = norm(sqrt(exactL[sub_E_idx]) - sqrt(L_map(T_q, sub_E, 0, params.MULT_NOISE)))
 
                 print_info("\tl_error=%f" % l_error)
                 if l_error < min_error:
@@ -322,23 +340,19 @@ def graph_scale(g, perturb, noise_std):
     print_info("TIME (sdp all LC kernel) = %gs" % tm_sdp)
 
     ## Calculate results from trilateration
-    if S.TRILATERATION:
+    if params.TRILATERATION:
         print_info("Performing trilateration for comparison:")
         tm.restart()
         tri = trilaterate_graph(g.adj, sqrt(exactL).A.ravel())
         print_info("TIME (trilaterate) = %gs" % tm.elapsed())
         tri.p = (optimal_rigid(tri.p[:,tri.localized], p[:,tri.localized]) * homogenous_vectors(tri.p))[:d,:]
-        
+        tri_g_error = norm(p[:,tri.localized] - tri.p[:,tri.localized]) 
     else:
-        tri = None
+        tri = g.tri
+        tri_g_error = -1
 
-    g_error = norm(p - approx) / sqrt(float(v))
-    l_error = norm(sqrt(exactL) - sqrt(L_map(approx, E, 0))) /sqrt(float(e))
-
-    if tri:
-        tri_g_error = norm(p[:,tri.localized] - tri.p[:,tri.localized])
-        print_info("\t#localized vertices = %d = (%f%%).\n\tMean error = %f = %fm" %
-                   (len(tri.localized), 100 *float(len(tri.localized))/v, tri_g_error, tri_g_error * S.meter_ratio()))
+    print_info("\t#localized vertices = %d = (%f%%).\n\tMean error = %f = %fm" %
+               (len(tri.localized), 100 *float(len(tri.localized))/v, tri_g_error, tri_g_error * params.meter_ratio()))
     
     # plot the info
     plot_info(g,
@@ -348,82 +362,109 @@ def graph_scale(g, perturb, noise_std):
               tang_var = tang_var,
               stress_var = stress_var,
               stress_spec = abs(kern.eigval),
-              perturb = perturb)
+              perturb = perturb,
+              params = params,
+              output_params = output_params)
 
-    print_info("PositionalError = %f = %fm" % (g_error, g_error * S.meter_ratio()))
-    print_info("DistanceError = %f = %fm" % (l_error, l_error * S.meter_ratio()))
+    error = p - approx
+    error_l = sqrt(exactL) - sqrt(L_map(approx, E, 0, params.MULT_NOISE))
+
+    g_error = norm(error) / sqrt(float(v))
+    l_error = norm(error_l) /sqrt(float(e))
+
+    llc_id = argmax(array(map(lambda lc: len(lc), lcs), 'i')) #largest linked component id
+    llc = lcs[llc_id]
+    sub_E, sub_E_idx = g.subgraph_edges(llc)
+    
+    stats = Stats()
+    stats.pos_error = g_error
+    stats.dis_error = l_error
+    stats.llc_pos_error = norm(error[:, llc]) / sqrt(float(len(llc)))
+    stats.llc_dis_error = norm(error_l[sub_E_idx]) / sqrt(float(len(sub_E_idx)))
+    stats.n_lcs = len(lcs)
+    stats.v_ratio_llc = float(len(llc)) / float(g.v)
+    if tri:
+        stats.v_ratio_ltri = float(len(tri.localized)) / float(g.v)
+    else:
+        stats.v_ratio_ltri = -1.0
+    
+    stats.v = g.v
+    stats.d = g.d
+    stats.avg_degree =  g.mean_degree()
+    
+
+    print_info("PositionalError = %f = %fm" % (g_error, g_error * params.meter_ratio()))
+    print_info("DistanceError = %f = %fm" % (l_error, l_error * params.meter_ratio()))
+    print_info("PositionalError of LLC = %f = %fm" % (stats.llc_pos_error, stats.llc_pos_error * params.meter_ratio()))
+    print_info("DistanceError of LLC = %f = %fm" % (stats.llc_dis_error, stats.llc_dis_error * params.meter_ratio()))
+    print_info("NumLCS = %d" % stats.n_lcs)
+    print_info("LLC ratio = %f%%" % (stats.v_ratio_llc * 100))
+    print_info("Trilateration ratio = %f%%" % (stats.v_ratio_ltri * 100))
 
     global NS
     NS = n_samples
 
-    return g_error, l_error
+    return stats
 
-def simulate(ignore_cache = False):
+def simulate(params, output_params, ignore_cache = False):
     if not ignore_cache:
-        e = check_info()
-        if e != None:
-            return e
+        stats = check_info(params)
+        if stats != None:
+            return stats
 
     dump_settings()
  
-    random.seed(S.RANDOM_SEED)
+    random.seed(params.RANDOM_SEED)
 
     tm = Timer()
     tm.restart()
-    g = random_graph(v = S.PARAM_V,
-                     d = S.PARAM_D,
-                     max_dist = S.dist_threshold(),
-                     min_dist = S.dist_threshold() * 0.05,
-                     max_degree = S.MAX_DEGREE)
+    g = random_graph(params)
+
     print_info("TIME (random_graph) = %g" % tm.elapsed())
 
-    if S.sENUMERATE_GLC:
-        return -1, -1
+    if output_params.ENUMERATE_GLC:
+        return None
 
-    edgelen = sqrt(L_map(g.p, g.E, 0.0).A.ravel())
+    edgelen = sqrt(L_map(g.p, g.E, 0.0, params.MULT_NOISE).A.ravel())
     edgelen_min, edgelen_med, edgelen_max = min(edgelen), median(edgelen), max(edgelen)
 
-    print_info("Realworld ratio: 1 unit = %fm " % S.meter_ratio())
+    print_info("Realworld ratio: 1 unit = %fm " % params.meter_ratio())
     print_info("Edge length:\n\tmin = %f = %fm\n\tmedian = %f = %fm\n\tmax = %f = %fm" % (
-        edgelen_min, edgelen_min * S.meter_ratio(),
-        edgelen_med, edgelen_med * S.meter_ratio(),
-        edgelen_max, edgelen_max * S.meter_ratio()))
+        edgelen_min, edgelen_min * params.meter_ratio(),
+        edgelen_med, edgelen_med * params.meter_ratio(),
+        edgelen_max, edgelen_max * params.meter_ratio()))
     
-    if S.MULT_NOISE:
-        noise_std = S.PARAM_NOISE_STD
-        perturb = edgelen_med * S.PARAM_PERTURB * noise_std
+    if params.MULT_NOISE:
+        noise_std = params.NOISE_STD
+        perturb = edgelen_med * params.PERTURB * noise_std
     else:
-        noise_std = S.PARAM_NOISE_STD * S.dist_threshold()
-        perturb = S.PARAM_PERTURB * noise_std
+        noise_std = params.NOISE_STD * params.dist_threshold()
+        perturb = params.PERTURB * noise_std
 
     info = 'Graph scale parameters:'
-    info += '\n\tmu = sampling factor = %g'    % S.PARAM_SAMPLINGS
-    info += '\n\tdelta/(R*epsilon) = %g' % S.PARAM_PERTURB
-    info += '\n\tN = %d' % S.SS_SAMPLES
-    info += '\n\tD = %d' % int(S.SDP_SAMPLE_MAX * g.d)
-    info += '\n\tR = %g' % S.dist_threshold()
-    info += '\n\tepsilon = noise level = %g'  % (S.PARAM_NOISE_STD)
-    info += '\n\tepsilon*R = noise stddev = %g = %gm' % (noise_std, noise_std * S.meter_ratio())
-    info += '\n\tdelta = perturb radius = %g = %gm'     % (perturb, perturb * S.meter_ratio())
+    info += '\n\tmu = sampling factor = %g'    % params.SAMPLINGS
+    info += '\n\tdelta/(R*epsilon) = %g' % params.PERTURB
+    info += '\n\tN = %d' % params.SS_SAMPLES
+    info += '\n\tD = %d' % int(params.SDP_SAMPLE_MAX * g.d)
+    info += '\n\tR = %g' % params.dist_threshold()
+    info += '\n\tepsilon = noise level = %g'  % (params.NOISE_STD)
+    info += '\n\tepsilon*R = noise stddev = %g = %gm' % (noise_std, noise_std * params.meter_ratio())
+    info += '\n\tdelta = perturb radius = %g = %gm'     % (perturb, perturb * params.meter_ratio())
     print_info(info)
 
     tm_total = Timer()
     tm_total.restart()
     
-    e = graph_scale(g = g, 
-                    perturb=max(S.PARAM_MIN_PERTURB, perturb),
-                    noise_std = noise_std)
+    stats = graph_scale(g = g, 
+                        perturb=max(params.MIN_PERTURB, perturb),
+                        noise_std = noise_std,
+                        params = params,
+                        output_params = output_params)
 
     print_info("TIME (total) = %gs" % tm_total.elapsed())
 
-    flush_info(e[0], e[1])
-    return e
+    flush_info(params, stats)
+    return stats
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        simulate(int(sys.argv[1]) > 0)
-    else:
-        simulate(False)
-
-
-
+    simulate(S.SimParams(), S.OutputParams(), len(sys.argv) > 1 and int(sys.argv[1]) > 0)

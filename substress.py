@@ -7,6 +7,7 @@ from tri import *
 from plot import *
 from genrig import *
 import stress
+import os
 from numpy import *
 import string, math
 
@@ -84,7 +85,7 @@ def calculate_exact_space(g, edge_idx, vtx_idx = None, replaceP = None):
     t = len(s[s >= S.EPS * 10])
     return u[:,t:], s, (locally_rigid_rank(v, d)-t)
 
-def estimate_space_from_subgraphs(Ls, g, Vs, Es):
+def estimate_space_from_subgraphs(Ls, g, Vs, Es, params):
     v, e = g.v, g.e
 
     print_info("Computing stress space for each subgraph")
@@ -94,7 +95,7 @@ def estimate_space_from_subgraphs(Ls, g, Vs, Es):
     missing_stress = []
     for i in xrange(v):
         try:
-            if S.EXACT_STRESS:
+            if params.EXACT_STRESS:
                 basis, s, misdim = calculate_exact_space(g, Es[i], Vs[i])
             else:
                 basis, s, misdim = estimate_space(Ls, g, Es[i], Vs[i])
@@ -121,14 +122,14 @@ def estimate_space_from_subgraphs(Ls, g, Vs, Es):
 
 PCA_CUTOFF = 0 # global stats reported by consolidate
 
-def consolidate(dim_T, sub_basis, sparse_param):
+def consolidate(dim_T, sub_basis, sparse_param, params):
     e, n, nz, Es = sparse_param
 
     print_info("Consolidating subspaces...")
 
     if S.USE_SPARSE_SVD:
         read_succ = False
-        fn = "%s/consolidate-%s.cache" % (S.DIR_CACHE, get_settings_hash())
+        fn = "%s/consolidate-%s.cache" % (S.DIR_CACHE, get_settings_hash(params))
         if S.CONSOLIDATE_READ_FROM_CACHE:
             try:
                 f = open(fn, "r")
@@ -141,7 +142,9 @@ def consolidate(dim_T, sub_basis, sparse_param):
         if (not S.CONSOLIDATE_READ_FROM_CACHE) or (not read_succ):
             # Now write a temporary file of the big sparse matrix
             print_info("Write out %dx%d sparse matrix for external SVDing" % (e, n) )
-            f = open("%s/input.st" % S.DIR_TMP, "w")
+            input_fn =  "%s/input-%s.st" % (S.DIR_TMP, get_settings_hash(params))
+            output_fn =  "%s/output-%s" % (S.DIR_TMP, get_settings_hash(params))
+            f = open(input_fn, "w")
             f.write("%d %d %d\n" % (e, n, nz))
             for k, B in enumerate(sub_basis):
                 for i in xrange(B.shape[1]):
@@ -153,10 +156,10 @@ def consolidate(dim_T, sub_basis, sparse_param):
 
             # and use './svd' to svd factorize it
             import os
-            os.system("%s/svd %s/input.st -o %s/output -d %d " % (S.DIR_BIN, S.DIR_TMP, S.DIR_TMP, e-dim_T))
+            os.system("%s/svd %s -o %s -d %d " % (S.DIR_BIN, input_fn, output_fn, e-dim_T))
 
             print_info("Read back SVD result")
-            f = open("%s/output-Ut" % S.DIR_TMP, "r")      # read in columns
+            f = open("%s-Ut" % output_fn, "r")      # read in columns
             f.readline()                        # skip first line (dimension info)
             u = zeros((e, e-dim_T), "d")
             for i in xrange(e-dim_T):           # now grab each column
@@ -165,10 +168,14 @@ def consolidate(dim_T, sub_basis, sparse_param):
                 u[:,i] = c[:,0]
             f.close()
 
-            f = open("%s/output-S" % S.DIR_TMP, "r")           # read in singular values
+            f = open("%s-S" % output_fn, "r")           # read in singular values
             f.readline()
             s = array(map(float, string.split(f.read())))
             f.close()
+
+            os.remove(input_fn)
+            os.remove("%s-Ut" % output_fn)
+            os.remove("%s-S" % output_fn)
 
             if S.CONSOLIDATE_WRITE_TO_CACHE:
                 f = open(fn, "w")
@@ -205,7 +212,7 @@ def consolidate(dim_T, sub_basis, sparse_param):
         u, s, vh = svd(m)
         u = u[:, :(e-dim_T)], s[:e-dimT]
 
-    thr = median(s[:e-dim_T]) * S.STRESS_VAL_PERC /100
+    thr = median(s[:e-dim_T]) * params.STRESS_VAL_PERC /100
     i = len(s) - 1
     while  i >= 0 and s[i] < thr:
         i = i-1
@@ -215,20 +222,23 @@ def consolidate(dim_T, sub_basis, sparse_param):
     
     return u[:,:i+1], s
 
-def sample(sub_S_basis, sparse_param):
+def sample(sub_S_basis, sparse_param, params):
     e, n, nz, Es = sparse_param
 
     print_info("Sampling from sub stress spaces...")
-    stress_samples = zeros((e, S.SS_SAMPLES+S.SS_SAMPLES/2), order = 'FORTRAN')
-    for i in xrange(S.SS_SAMPLES+S.SS_SAMPLES/2):
+    stress_samples = zeros((e, params.SS_SAMPLES+params.SS_SAMPLES/2), order = 'FORTRAN')
+    for i in xrange(params.SS_SAMPLES+params.SS_SAMPLES/2):
         for j, basis in enumerate(sub_S_basis):
+            if basis.shape[0] == 0 and basis.shape[1] == 0:
+                continue
             w = asmatrix(basis) * asmatrix(random.random((basis.shape[1], 1)))
             w /= norm(w)
             stress_samples[Es[j],i:i+1] += w
+            
 
-    if S.ORTHO_SAMPLES:
+    if params.ORTHO_SAMPLES:
         stress_samples = svd(stress_samples)[0][:,:stress_samples.shape[1]]
 
-    return stress_samples[:,:S.SS_SAMPLES]            
+    return stress_samples[:,:params.SS_SAMPLES]            
 
 

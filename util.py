@@ -2,6 +2,7 @@ from numpy import *
 from scipy.linalg.basic import *
 from scipy.linalg.decomp import *
 import settings as S
+import cPickle
 
 def factorial(n):              
     """
@@ -27,37 +28,44 @@ def print_info(s):
     global info_buffer
     info_buffer.append(s)
 
-def check_info():
+def check_info(params):
     """ Check if [hash].info corresponding to the current settings
     exist and print if it does."""
 
     try:
-        fn = "%s/%s.info" % (S.DIR_PLOT, get_settings_hash())
+        fn = "%s/%s.info" % (S.DIR_PLOT, get_settings_hash(params))
         f = open(fn, "rb")
         l = f.read()
         print "### Cached info %s present. Will skip actural run." %fn
         print l
         f.close()
 
-        f = open("%s/%s.result" % (S.DIR_PLOT, get_settings_hash()), "rb")
-        t = f.read().strip().split()
+
+        f = open("%s/%s.result" % (S.DIR_PLOT, get_settings_hash(params)), "rb")
+        p = cPickle.load(f)             # the original param
+        stats = cPickle.load(f)
         f.close()
-        
-        return float(t[0]), float(t[1])
+        return stats
+
     except IOError:
         return None
+    except EOFError:
+        return None
 
-def flush_info(error_p, error_d):
+def flush_info(params, stats):
     """ Flush info to [hash].info where hash is hash(settings) and write error to [hash].result"""
+    h = get_settings_hash(params)
     global info_buffer
-    f = open("%s/%s.info" % (S.DIR_PLOT, get_settings_hash()), "wb")
+    f = open("%s/%s.info" % (S.DIR_PLOT, h), "wb")
     for l in info_buffer:
         f.write(l)
         f.write('\n')
     f.close()
     info_buffer = []
-    f = open("%s/%s.result" % (S.DIR_PLOT, get_settings_hash()), "wb")
-    f.write("%g %g" % (error_p, error_d))
+    f = open("%s/%s.result" % (S.DIR_PLOT, h), "wb")
+    import cPickle
+    cPickle.dump(params, f)
+    cPickle.dump(stats, f)
     f.close()
 
 def dump_settings():
@@ -68,9 +76,9 @@ def dump_settings():
         print_info("\t%s :  %s" % (s[0], s[1]))
 
 
-def get_settings_hash():
+def get_settings_hash(params):
     import settings
-    h = hash(tuple(get_module_consts(settings)))
+    h = hash((tuple(get_object_consts(params)), tuple(get_module_consts(settings))))
     if h < 0:
         return '0'+str(-h)
     else:
@@ -102,6 +110,9 @@ def random_p(v, d, sample_space_pred):
 
 def get_module_consts(mod):
     return [(n, mod.__getattribute__(n)) for n in dir(mod) if n.isupper()]
+
+def get_object_consts(obj):
+    return [(n, getattr(obj, n)) for n in dir(obj) if n.isupper()]
 
     
 def ridx(idx, size):

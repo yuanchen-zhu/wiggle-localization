@@ -1,7 +1,5 @@
 from numpy import *
 from scipy.linalg.basic import *
-from pylab import *
-from matplotlib.collections import LineCollection
 
 ROTATE_BY_90 = matrix([[0, -1],
                        [1, 0]], 'd')
@@ -40,8 +38,11 @@ def trilaterate2d(u, r):
 
 def localize_given_seeds(adj, r, seed_tri, seed_tri_pos):
     v = len(adj)
-    p = asmatrix(zeros((2, v), 'd'))
-    p[:,seed_tri] = seed_tri_pos
+    if r != None:
+        p = asmatrix(zeros((2, v), 'd'))
+        p[:,seed_tri] = seed_tri_pos
+    else:
+        p = None
 
     # flag = 0 => vertex not localized, not in queue
     # flag = 1 => vertex not localized, but in queue
@@ -68,7 +69,8 @@ def localize_given_seeds(adj, r, seed_tri, seed_tri_pos):
                         break
             if len(anchors) >= 3:
                 # yes! can localize
-                p[:,u] = trilaterate2d(p[:,anchors], r[anchor_edges])
+                if r != None:
+                    p[:,u] = trilaterate2d(p[:,anchors], r[anchor_edges])
                 flag[u] = 2
                 used_edges.extend([[u, anchors[0]], [u, anchors[1]], [u, anchors[2]]])
 
@@ -84,7 +86,7 @@ def localize_given_seeds(adj, r, seed_tri, seed_tri_pos):
     localized = [i for i in xrange(v) if flag[i] == 2]
             
     return p, array(localized, 'i'), array(used_edges, 'i')
-    
+
 
 def position_tri(r):
     x = (r[2] * r[2] - r[1] * r[1])/(2 * r[0]) + r[0]/2
@@ -111,18 +113,22 @@ def enumerate_tris(adj, r):
                     if not (ordinal in in_list):
                         in_list.add(ordinal)
                         tris.append([u, w, x])
-                        tri_edges.append([r[i], r[k], r[j]])
+                        if r != None:
+                            tri_edges.append([r[i], r[k], r[j]])
     return tris, tri_edges
 
 class TriResult:
     pass
 
-def trilaterate_graph(adj, r):
+# r is the distance, if None, then only find largest trilateration graph
+def trilaterate_graph(adj, r = None):
     tris, tri_edge_len = enumerate_tris(adj, r)
     max_num_localized = 0
     for i, seed_tri in enumerate(tris):
-        seed_pos = position_tri(tri_edge_len[i])
-        localize_given_seeds(adj, r, seed_tri, seed_pos)
+        if r != None:
+            seed_pos = position_tri(tri_edge_len[i])
+        else:
+            seed_pos = None
 
         p, localized, used_edges = localize_given_seeds(adj, r, seed_tri, seed_pos)
         if len(localized) > max_num_localized:
@@ -140,27 +146,3 @@ def trilaterate_graph(adj, r):
     tri.localized = opt_localized
     tri.used_edges = opt_used_edges
     return tri
-
-
-
-    ## # draw some plots to verify
-    ## point_size = 20*math.sqrt(30)/math.sqrt(v)
-    ## scatter(x = p[0,localized].A.ravel(),
-    ##         y = p[1,localized].A.ravel(),
-    ##         s = point_size,
-    ##         linewidth = (0.0),
-    ##         c = "red",
-    ##         marker = 'o',
-    ##         zorder = 99,
-    ##         alpha = 1)
-
-    ## gca().add_collection(LineCollection([
-    ##     p.T[e] for e in used_edges], colors = "black", alpha=1, linewidth=0.06 * point_size))
-
-        
-    
-
-                    
-
-        
-        

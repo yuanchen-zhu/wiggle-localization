@@ -6,11 +6,11 @@ import os
 import settings as S
 import substress 
 
-def plot_info(g, L_opt_p, tri, dim_T, tang_var, stress_var, stress_spec, perturb):
+def plot_info(g, L_opt_p, tri, dim_T, tang_var, stress_var, stress_spec, perturb, params, output_params):
 
     d, v, p, E  = g.d, g.v, g.p, g.E
 
-    if S.sSKIP_PLOT:
+    if output_params.SKIP_PLOT:
         print_info("Skip plotting...")
         return
 
@@ -28,7 +28,11 @@ def plot_info(g, L_opt_p, tri, dim_T, tang_var, stress_var, stress_spec, perturb
         if t:
             title(t)
         semilogy()
-        plot(xrange(len(stress_var)), stress_var)
+        a = array(stress_var)
+        for i in xrange(len(a)):
+            a[i] = max(a[i], S.EPS)
+        
+        plot(xrange(len(stress_var)), a)
         axvline(g.e - g.gr.dim_T)
         axvline(substress.PCA_CUTOFF)
         #axvline(len(tang_var)*S.STRESS_PERC/100)
@@ -67,7 +71,7 @@ def plot_info(g, L_opt_p, tri, dim_T, tang_var, stress_var, stress_spec, perturb
                ('+', 1),
                ('x', 1)]
     markers = [('o', 0)]
-    point_size = S.sPLOT_POINT_SIZE*math.sqrt(30)/math.sqrt(v)
+    point_size = output_params.PLOT_POINT_SIZE*math.sqrt(30)/math.sqrt(v)
     line_width = point_size * 0.5
 
     def draw_geometry2d(rect, t = None):
@@ -213,7 +217,7 @@ def plot_info(g, L_opt_p, tri, dim_T, tang_var, stress_var, stress_spec, perturb
         os.system("epstopdf %s.eps" % prefix)
         print_info("%s.{eps|pdf} generated" % prefix)
 
-    fn = "%s/%s" % (S.DIR_PLOT, get_settings_hash())
+    fn = "%s/%s" % (S.DIR_PLOT, get_settings_hash(params))
 
     # draw the summary plot
     figure(figsize=(12,8))
@@ -239,9 +243,9 @@ def plot_info(g, L_opt_p, tri, dim_T, tang_var, stress_var, stress_spec, perturb
     os.system("evince %s-summary.pdf&" %fn)
 
     #draw tangent or stress var
-    fs = (S.sPLOT_SIZE,S.sPLOT_SIZE)
-    dim = 1 - S.sMARGIN*1.5
-    rect = [S.sMARGIN,S.sMARGIN,dim,dim]
+    fs = (output_params.PLOT_SIZE,output_params.PLOT_SIZE)
+    dim = 1 - output_params.MARGIN*1.5
+    rect = [output_params.MARGIN,output_params.MARGIN,dim,dim]
 
     figure(figsize=fs)
     if tang_var != None:

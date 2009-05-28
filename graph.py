@@ -11,6 +11,9 @@ class Graph:
         self.e = len(E)
         self._adj = None
 
+    def mean_degree(self):
+        return 2.0 * float(self.e)/float(self.v)
+
     def _get_adj(self):
         if self._adj == None:
             adj = [[] for i in xrange(self.v)]
