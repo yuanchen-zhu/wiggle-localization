@@ -2,10 +2,6 @@
 import scipy.stats
 import cPickle
 
-# Ubuntu Hardy annoyance: the XML lib I use is deprecated
-import sys
-sys.path = ['/usr/lib/python%s/site-packages/oldxml' % sys.version[:3]] + sys.path 
-
 import settings as S
 from geo import *
 from util import *
@@ -22,7 +18,7 @@ from numpy import *
 import string
 
 
-from mitquest import Floorplan
+from mitquest import Floorplan, load_floorplan
 from scipy.linalg.basic import *
 from scipy.linalg.decomp import *
 
@@ -58,7 +54,7 @@ def build_edgeset(p, max_dist, min_dist, max_degree, pred):
     return array(list(E), 'i')
 
 
-def random_graph(params):
+def random_graph(params, ignore_cache = False, graph_override = None):
     print_info("Create random graph...")
 
     v = params.V
@@ -68,12 +64,17 @@ def random_graph(params):
     max_degree = params.MAX_DEGREE
     
     param_hash = hash((v, d, max_dist, min_dist, max_degree, params.FLOOR_PLAN_FN, params.SINGLE_LC, params.RANDOM_SEED))
-    cache_fn = "%s/graph-%d.cache" % (S.DIR_CACHE, param_hash)
 
+    if graph_override == None:
+        cache_fn = "%s/graph-%d.cache" % (S.DIR_CACHE, param_hash)
+    else:
+        cache_fn = graph_override
 
     def load():
+        if ignore_cache:
+            return None
         try:
-            f = open(cache_fn, "r")
+            f = open(cache_fn, "rb")
             g = cPickle.load(f)
             print_info("\tRead from graph cache %s" % cache_fn)
             f.close()
@@ -86,7 +87,7 @@ def random_graph(params):
 
     if g == None:
         if params.FLOOR_PLAN_FN:
-            floor_plan = Floorplan("%s/%s" % (S.DIR_DATA, params.FLOOR_PLAN_FN))
+            floor_plan = load_floorplan("%s/%s" % (S.DIR_DATA, params.FLOOR_PLAN_FN))
             vpred = lambda p: floor_plan.inside(p)
             epred = lambda p, q: not floor_plan.intersect(p, q)
         else:
@@ -100,22 +101,24 @@ def random_graph(params):
         print_info("|V|=%d |E|=%d" % (g.v, g.e))
 
         
-        print_info("Filtering dangling vertices...")
-        while 1:
-            oldv = g.v
-            g = filter_dangling_v(g)
-            if oldv == g.v:
-                break
-            print_info("\t|V|=%d |E|=%d" % (g.v, g.e))
+        #print_info("Filtering dangling vertices...")
+        #while 1:
+        #    oldv = g.v
+        #    g = filter_dangling_v(g)
+        #    if oldv == g.v:
+        #        break
+        #    print_info("\t|V|=%d |E|=%d" % (g.v, g.e))
 
         g.gr = GenericRigidity(g.v, g.d, g.E)
 
         if params.SINGLE_LC:
 
             while True:
+                print_info("Extracting largest linked component...")
                 lcs = stress.detect_LC_from_kernel(g, g.gr.K_basis)
                 largest_lc_id = argmax(array(map(lambda lc: len(lc), lcs), 'i'))
                 g = subgraph(g, lcs[largest_lc_id])
+
                 g.gr = GenericRigidity(g.v, g.d, g.E)
                 if g.gr.type == 'G':
                     break
@@ -128,7 +131,7 @@ def random_graph(params):
         g.tri = trilaterate_graph(g.adj)
         print_info("\tsize = %d" % len(g.tri.localized))
         
-        f = open(cache_fn, "w")
+        f = open(cache_fn, "wb")
         cPickle.dump(g, f)
         f.close()
         print_info("\tWrite to graph cache %s" % cache_fn)
@@ -138,6 +141,8 @@ def random_graph(params):
     print_info("\t|V|=%d\n\t|E|=%d\n\tMeanDegree=%g (%g)" % (g.v, g.e, g.mean_degree(), md))
     print_info('\ttype = %s\n\trigidity matrix rank = %d  (max = %d)\n\tstress kernel dim = %d (min = %d)'
                % (g.gr.type, g.gr.dim_T, locally_rigid_rank(g.v, d), g.gr.dim_K, d + 1))
+
+    g.hash = param_hash         # store the hash
 
     return g
 
@@ -179,7 +184,7 @@ def dump_graph(g, lc, T_q, fn):
 class Stats:
     pass
 
-def graph_scale(g, perturb, noise_std, params, output_params):
+def graph_scale(g, perturb, noise_std, params, output_params, graph_override):
     tm = Timer()
     
     v, p, d, e, E = g.v, g.p, g.d, g.e, g.E
@@ -187,6 +192,26 @@ def graph_scale(g, perturb, noise_std, params, output_params):
 
     tang_var = None
     stress_var = None
+
+    if params.STRESS_SAMPLE == 'semilocal':
+        tm.restart()
+        Vs, Es = g.get_k_ring_subgraphs(params.K_RING, params.MIN_LOCAL_NBHD)
+        print_info("TIME (get_k_ring_subgraphs) = %gs" % tm.elapsed())
+
+        tm.restart()
+        g.gsr = GenericSubstressRigidity(g, Vs, Es, params)
+        print_info("TIME (Generic substress rigidity) = %gs" % tm.elapsed())
+
+        tm.restart()
+        lcs = stress.detect_LC_from_kernel(g, g.gsr.K_basis)
+        print_info("TIME (detect LC from kernel) = %gs" % tm.elapsed())
+    else:
+        tm.restart()
+        lcs = stress.detect_LC_from_kernel(g, g.gr.K_basis)
+        print_info("TIME (detect LC from kernel) = %gs" % tm.elapsed())
+    g.lcs = lcs
+    
+
     if params.STRESS_SAMPLE == 'global':
         n_samples = int(dim_T * params.SAMPLINGS)
 
@@ -206,10 +231,6 @@ def graph_scale(g, perturb, noise_std, params, output_params):
         print_info("TIME (sample stress) = %gs" % tm.elapsed())
         
     else:
-        tm.restart()
-        Vs, Es = g.get_k_ring_subgraphs(params.K_RING, params.MIN_LOCAL_NBHD)
-        print_info("TIME (get_k_ring_subgraphs) = %gs" % tm.elapsed())
-
         n_samples = int(max([len(vi) * d for vi in Vs]) * params.SAMPLINGS)
         tm.restart()
         Ls, L, exactL = measure_L(g, perturb, noise_std, n_samples, params.MULT_NOISE)
@@ -240,19 +261,8 @@ def graph_scale(g, perturb, noise_std, params, output_params):
             ss = substress.sample(sub_S_basis, sparse_param, params)
             print_info("TIME (substress.sample) = %gs" % tm.elapsed())
 
-    if params.STRESS_SAMPLE == 'semilocal':
-        tm.restart()
-        g.gsr = GenericSubstressRigidity(g, Vs, Es, params)
-        print_info("TIME (Generic substress rigidity) = %gs" % tm.elapsed())
 
-        tm.restart()
-        lcs = stress.detect_LC_from_kernel(g, g.gsr.K_basis)
-        print_info("TIME (detect LC from kernel) = %gs" % tm.elapsed())
-    else:
-        tm.restart()
-        lcs = stress.detect_LC_from_kernel(g, g.gr.K_basis)
-        print_info("TIME (detect LC from kernel) = %gs" % tm.elapsed())
-    g.lcs = lcs
+    
 
     tm.restart()
     kern = stress.sample_kernel(g, ss)
@@ -265,18 +275,24 @@ def graph_scale(g, perturb, noise_std, params, output_params):
     tm_pca = 0
     tm_sdp = 0
     print_info("Optimizing and fitting each linked components:")
+    lcs.reverse()
     for i, lc in enumerate(lcs):
         tm.restart()
         sub_E, sub_E_idx = g.subgraph_edges(lc)
         tm_subg += tm.elapsed()
         
         tm.restart()
-        sub_K, s = kern.extract_sub(lcs, i, g.d * params.SDP_SAMPLE_MAX)
+
+        sub_K, s = kern.extract_sub(lc, g.d * params.SDP_SAMPLE_MAX)
         tm_pca = tm_pca + tm.elapsed()
 
         tm.restart()
         if params.SDP_SAMPLE_MAX == 0:
-            T, Tf = optimal_linear_transform_for_l_lsq(asmatrix(sub_K)[:, :g.d], d, sub_E, L[sub_E_idx])
+            q = asmatrix(sub_K)[:, :g.d].T
+            if q.shape[0] < g.d:
+                q = vstack((q, zeros((g.d-q.shape[0], q.shape[1]))))
+
+            T, Tf = optimal_linear_transform_for_l_lsq(q, d, sub_E, L[sub_E_idx])
         else:
             # enumerate through possible sdp_sample:
             min_error = 1e10
@@ -285,7 +301,7 @@ def graph_scale(g, perturb, noise_std, params, output_params):
 
             
             if len(lc) <= params.SDP_SAMPLE_ENUMERATE_THRESHOLD:
-                sdps_list =  xrange(int(round(g.d * params.SDP_SAMPLE_MIN)), int(round(g.d * params.SDP_SAMPLE_MAX))+1)
+                sdps_list =  xrange(int(round(g.d * params.SDP_SAMPLE_MIN)), int(round(g.d * params.SDP_SAMPLE_MAX_ENUMERATE))+1, 2)
             else:
                 sdps_list = [int(round(g.d * params.SDP_SAMPLE_MAX))]
 
@@ -305,9 +321,18 @@ def graph_scale(g, perturb, noise_std, params, output_params):
                 print_info("\tSDP on %d coordinate vectors..." % q.shape[0])
                 T, Tf = optimal_linear_transform_for_l_sdp(q, d, sub_E, L[sub_E_idx])
                 Tf_q = Tf * q
+    
 
                 Tf_q -= Tf_q.mean(axis=1)
-                uu = svd(Tf_q)[0]
+
+                # some stupid memory error of python/numpy/scipy
+                # forces of me to make a fresh copy of Tf_q
+                newq = zeros(Tf_q.shape, 'd')
+                newq[:,:] = Tf_q[:,:]
+                Tf_q = newq
+
+                uu, _t1, _t2 = svd_conv(Tf_q)
+                
                 T_q = asmatrix(uu).T * Tf_q
                 T = (asmatrix(uu).T * Tf)[:d, :]
                 
@@ -364,7 +389,8 @@ def graph_scale(g, perturb, noise_std, params, output_params):
               stress_spec = abs(kern.eigval),
               perturb = perturb,
               params = params,
-              output_params = output_params)
+              output_params = output_params,
+              graph_override = graph_override)
 
     error = p - approx
     error_l = sqrt(exactL) - sqrt(L_map(approx, E, 0, params.MULT_NOISE))
@@ -391,6 +417,8 @@ def graph_scale(g, perturb, noise_std, params, output_params):
     stats.v = g.v
     stats.d = g.d
     stats.avg_degree =  g.mean_degree()
+
+    stats.n_samples = n_samples
     
 
     print_info("PositionalError = %f = %fm" % (g_error, g_error * params.meter_ratio()))
@@ -406,24 +434,52 @@ def graph_scale(g, perturb, noise_std, params, output_params):
 
     return stats
 
-def simulate(params, output_params, ignore_cache = False):
+def generate_txt_graph(g, meter_ratio):
+    base_fn = "graph-%d.txt" % g.hash
+    fn = S.DIR_CACHE + "/" + base_fn
+
+    f = open(fn, "wb")
+    f.write("%d %d %d %g %g\n" % (g.v, g.d, g.e, g.mean_degree(), meter_ratio))
+    l = sqrt(L_map(g.p, g.E, 0, 0))
+
+    for i in xrange(g.e):
+        f.write("%d %d %g\n" % (g.E[i,0], g.E[i,1], l[i,0]))
+
+    for i in xrange(g.v):
+        for j in xrange(g.d):
+            f.write("%g " % (g.p[j,i]))
+        f.write("\n")
+
+    f.close()
+    print_info("\tPlain text version of graph written to %s" % fn)
+            
+    return base_fn
+
+
+    
+
+def simulate(params, output_params, ignore_cache = False, ignore_graph_cache = False, graph_override = None):
     if not ignore_cache:
-        stats = check_info(params)
+        stats = check_info(params, output_params, graph_override)
         if stats != None:
             return stats
 
-    dump_settings()
+    dump_settings(params)
  
     random.seed(params.RANDOM_SEED)
 
     tm = Timer()
     tm.restart()
-    g = random_graph(params)
+    g = random_graph(params, ignore_graph_cache, graph_override)
 
     print_info("TIME (random_graph) = %g" % tm.elapsed())
 
     if output_params.ENUMERATE_GLC:
         return None
+
+    if output_params.GENERATE_TXT_GRAPH:
+        fn = generate_txt_graph(g, params.meter_ratio())
+        return fn
 
     edgelen = sqrt(L_map(g.p, g.E, 0.0, params.MULT_NOISE).A.ravel())
     edgelen_min, edgelen_med, edgelen_max = min(edgelen), median(edgelen), max(edgelen)
@@ -459,12 +515,27 @@ def simulate(params, output_params, ignore_cache = False):
                         perturb=max(params.MIN_PERTURB, perturb),
                         noise_std = noise_std,
                         params = params,
-                        output_params = output_params)
+                        output_params = output_params,
+                        graph_override = graph_override)
+
+    stats.edgelen_min = edgelen_min
+    stats.edgelen_med = edgelen_med
+    stats.edgelen_max = edgelen_max
+    stats.v = g.v
 
     print_info("TIME (total) = %gs" % tm_total.elapsed())
+    
 
-    flush_info(params, stats)
+    flush_info(params, stats, graph_override)
+    
     return stats
 
 if __name__ == "__main__":
-    simulate(S.SimParams(), S.OutputParams(), len(sys.argv) > 1 and int(sys.argv[1]) > 0)
+    ignore_cache = False
+    if len(sys.argv) > 1:
+        ignore_cache = int(sys.argv[1]) > 0
+    graph_override = None
+    if len(sys.argv) > 2:
+        graph_override = sys.argv[2]
+
+    simulate(S.SimParams(), S.OutputParams(), ignore_cache = ignore_cache, graph_override = graph_override)

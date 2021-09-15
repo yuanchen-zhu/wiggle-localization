@@ -124,6 +124,11 @@ class TriResult:
 def trilaterate_graph(adj, r = None):
     tris, tri_edge_len = enumerate_tris(adj, r)
     max_num_localized = 0
+    tri = TriResult()
+    tri.p = None
+    tri.localized = array([], 'i')
+    tri.used_edges = array([], 'i')
+    tri.seed = [-1, -1, -1]
     for i, seed_tri in enumerate(tris):
         if r != None:
             seed_pos = position_tri(tri_edge_len[i])
@@ -133,16 +138,11 @@ def trilaterate_graph(adj, r = None):
         p, localized, used_edges = localize_given_seeds(adj, r, seed_tri, seed_pos)
         if len(localized) > max_num_localized:
             max_num_localized = len(localized)
-            opt_p = p
-            opt_localized = localized
-            opt_used_edges = used_edges
-            opt_seed = seed_tri
+            tri.p = p
+            tri.localized = localized
+            tri.used_edges = used_edges
+            tri.seed = seed_tri
             if max_num_localized == len(adj):
                 break
 
-    tri = TriResult()
-    tri.p = opt_p
-    tri.seed = opt_seed
-    tri.localized = opt_localized
-    tri.used_edges = opt_used_edges
     return tri

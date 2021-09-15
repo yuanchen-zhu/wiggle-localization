@@ -14,7 +14,6 @@ def calculate_exact_space(g):
     u, s, vh = svd_conv(D)               # E by dv, sparse, 2dE non-zero
     t = len(s[s >= S.EPS])
     return u[:,t:], s
-
             
 def sample(S_basis, params):
     n_S = S_basis.shape[1]
@@ -23,7 +22,7 @@ def sample(S_basis, params):
     print_info("Get random stresses...")
 
     if params.RANDOM_STRESS:
-        ss = asmatrix(S_basis) * asmatrix(random.random((n_S, nss+nss/2)))
+        ss = asmatrix(S_basis) * asmatrix(random.uniform(size=(n_S, nss+nss/2)))
         if params.ORTHO_SAMPLES:
             if ss.shape[0] != 0 and ss.shape[1] != 0:
                 ss = svd(ss)[0]
@@ -60,36 +59,28 @@ class Kernel:
         self.eigval = self.eigval[order]
         self.eigvec = self.eigvec[:, order]
         
-    def extract(self, d, eps = S.EPS):
+    def extract_by_threshold(self, maxd, eps = S.EPS):
         kd = len(self.eigval[self.eigval < eps])
-        kd = max(kd, d+1)
+        kd = max(kd, maxd+1)
         return self.eigvec[:,1:kd], self.eigval[1:]
 
-    def extract_sub(self, lcs, cur_lc_id, kern_dim_minus_one, eps = S.EPS):
-        sub_dims = lcs[cur_lc_id]
-        
+    def extract_sub(self, sub_dims, kern_dim_minus_one, eps = S.EPS):
         if len(sub_dims) == 1:
             return zeros((1, kern_dim_minus_one), 'd'), zeros((1,1), 'd')
-
-        #SS = matrix(self.sigma)
-        #for i in xrange(self.v):
-        #    if not (i in lcs):
-        #        SS[i,:] = 0
-        #        SS[:,i] = 0
-                
-
-        #for i in xrange(self.v):
-        #    SS[i,i] = sum(SS[i, 
-                
 
         basis = asmatrix(ones(((self.v), 1), 'd'))
         for i in xrange(kern_dim_minus_one):
             #print_info("\nSearching for sub kernel basis No. %d:" % (i+1))
-            
 
+            # The matrix J zeros out entries not in the subgraph
             J = asmatrix(zeros((self.v, self.v), 'd'))
             for v in sub_dims:
                 J[v, v] = 1.0
+
+            # The matrix C0 constraints that the vector we we seek,
+            # say x, is orthogonal (only considering coordinates in
+            # the subgraph) to all the basis vectors we have
+            # found. C0 x != 0 <=> y_i^T J x != 0 for all i
 
             C0 = zeros(basis.shape, 'd')
             C0[sub_dims, :] = basis[sub_dims, :]
@@ -109,11 +100,15 @@ class Kernel:
 
             #s, u = eigh(nJ.T * nJ + nsigma.T * nsigma)
             s, u = eigh(nJ + nsigma)
+
+            # The matrix C1 constraints that the vector we seek is not
+            # in the intersection of the kernel of J and Sigma. C1 x
+            # != 0 <=> x \not\in (ker J \cap ker Sigma)
             C1 = asmatrix(u)[:, abs(s) < eps]
 
+            # Stack the two constraint into one
             C = hstack((C0, C1))
             #print_info("dim(C)=%s" % str(C.shape))
-            
 
             if C.shape[1] > 0:
                 u, s, vt = svd(C)
@@ -236,10 +231,11 @@ def detect_LC_from_kernel(g, kernel_basis, eps = 1e-4):
     kernel_basis = svd(kernel_basis - vec_1 * vec_1.T * kernel_basis)[0][:, :s]
     kernel_basis = asmatrix(hstack([vec_1, kernel_basis]))
 
+    print 'len(tris)=%d' % len(tris)
     for t in tris:
         if len(v_cc[t[0]]) > 0 and len(v_cc[t[1]]) > 0 and len(v_cc[t[2]]) > 0:
             continue
-        if matrix_rank(kernel_basis[t,:], eps) < g.d + 1:
+        if matrix_rank(kernel_basis[t,:], eps=eps*1e-11, printS=True) < g.d + 1:
             continue
         cn = len(cc)
         cc.append([])

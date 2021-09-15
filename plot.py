@@ -6,7 +6,7 @@ import os
 import settings as S
 import substress 
 
-def plot_info(g, L_opt_p, tri, dim_T, tang_var, stress_var, stress_spec, perturb, params, output_params):
+def plot_info(g, L_opt_p, tri, dim_T, tang_var, stress_var, stress_spec, perturb, params, output_params, graph_override):
 
     d, v, p, E  = g.d, g.v, g.p, g.E
 
@@ -87,7 +87,7 @@ def plot_info(g, L_opt_p, tri, dim_T, tang_var, stress_var, stress_spec, perturb
                                edgecolor = "black"))
         
         # graph trilateration result
-        if tri != None:
+        if tri != None and tri.p != None:
             scatter(x = tri.p[0,tri.localized].A.ravel(),
                     y = tri.p[1,tri.localized].A.ravel(),
                     s = point_size,
@@ -130,7 +130,7 @@ def plot_info(g, L_opt_p, tri, dim_T, tang_var, stress_var, stress_spec, perturb
                     alpha = 1)
 
 
-        if tri != None:
+        if tri != None and tri.p != None:
             gca().add_collection(LineCollection(
                 [tri.p.T[e] for e in tri.used_edges],
                 colors = "red",
@@ -214,10 +214,13 @@ def plot_info(g, L_opt_p, tri, dim_T, tang_var, stress_var, stress_spec, perturb
         
     def save(prefix):
         savefig("%s.eps" % prefix)
-        os.system("epstopdf %s.eps" % prefix)
-        print_info("%s.{eps|pdf} generated" % prefix)
+        print_info("%s.eps generated" % prefix)
+        if output_params.CONVERT_PDF:
+            print_info("%s.pdf generated" % prefix)
+            os.system("epstopdf %s.eps" % prefix)
 
-    fn = "%s/%s" % (S.DIR_PLOT, get_settings_hash(params))
+
+    fn = "%s/%s" % (S.DIR_PLOT, get_settings_hash(params, graph_override))
 
     # draw the summary plot
     figure(figsize=(12,8))
@@ -240,7 +243,8 @@ def plot_info(g, L_opt_p, tri, dim_T, tang_var, stress_var, stress_spec, perturb
                   "Error")
 
     save(fn+'-summary')
-    os.system("evince %s-summary.pdf&" %fn)
+    if output_params.OPEN_EPS:
+        os.system("evince %s-summary.eps&" %fn)
 
     #draw tangent or stress var
     fs = (output_params.PLOT_SIZE,output_params.PLOT_SIZE)

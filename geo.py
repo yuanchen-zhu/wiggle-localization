@@ -2,6 +2,9 @@ from numpy import *
 from scipy.linalg.basic import *
 from scipy.linalg.decomp import *
 from util import *
+import cvxopt.coneprog;
+from cvxopt.base import matrix, spmatrix
+from cvxopt import solvers
 import settings as S
 
 def translate_matrix(t):
@@ -142,11 +145,8 @@ def optimal_linear_transform_for_l_sdp(p, d, E, l):
     # Constraint (2):
     #  <=> unpack x into a symmetric matrix S and S >= 0
 
-    import cvxopt.coneprog;
-    from cvxopt.base import matrix, spmatrix
-    from cvxopt import solvers
     cvxopt.coneprog.options['DSDP_Monitor'] = 10
-    cvxopt.coneprog.options['DSDP_GapTolerance'] = 1e-5
+    cvxopt.coneprog.options['DSDP_GapTolerance'] = 1e-4
     cvxopt.coneprog.options['DSDP_MaxIts'] = 200
     
     rs, cs, vs = [], [], []
@@ -186,13 +186,14 @@ def optimal_linear_transform_for_l_sdp(p, d, E, l):
 
     # Use (I * EPS) because the DSDP solver seems to enforce strict
     # inequality constraints, i.e., S < 0 instead of S <= 0.
-    h1 = matrix(spmatrix([S.EPS]*k,range(k),range(k),(k,k)))
-
+    
     c = matrix([[0.0]*n + [1.0]])
     
     if S.SDP_USE_DSDP:
+        h1 = matrix(spmatrix([S.EPS]*k,range(k),range(k),(k,k)))
         sol = solvers.sdp(c, Gs=[G0,G1], hs=[h0,h1], solver="dsdp")
     else:
+        h1 = matrix(spmatrix([0]*k,range(k),range(k),(k,k)))
         sol = solvers.sdp(c, Gs=[G0,G1], hs=[h0,h1])
     
     x = sol['x']
@@ -209,12 +210,14 @@ def optimal_linear_transform_for_l_sdp(p, d, E, l):
 
     # find M s.t transpose(M) * M = rank_restricted(s, d)
     e, v = eig(s)                      # we have s = v * diag(e) * v.T
-    e, v = sqrt(e.real), v.real
+    e, v = sqrt(abs(e)), v.real
     order = range(k)
     order.sort(key = lambda i: -e[i]) # e[order] is sorted in descreasing value
     print_info("Transformation matrix eigenvalues: %s" % str(e[order]))
     print_info("Transformation matrix id: %s" % str(order))
-    return asmatrix(dot(diag(e[order[:d]]), v.T[order[:d],:])), asmatrix(dot(diag(e[order]), v.T[order,:]))
+    ret = asmatrix(dot(diag(e[order[:d]]), v.T[order[:d],:])), asmatrix(dot(diag(e[order]), v.T[order,:]))
+
+    return ret
 
 
 

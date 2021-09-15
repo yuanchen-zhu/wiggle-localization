@@ -80,7 +80,7 @@ def calculate_exact_space(g, edge_idx, vtx_idx = None, replaceP = None):
     d = g.d
     newE = E[edge_idx]
 
-    D = rigidity_matrix(v, d, [[r[e[0]], r[e[1]]] for e in newE], g.p[:,vtx_idx])
+    D = rigidity_matrix(v, d, [[r[e[0]], r[e[1]]] for e in newE], p[:,vtx_idx])
     u, s, vh = svd_conv(D)               # E by dv, sparse, 2dE non-zero
     t = len(s[s >= S.EPS * 10])
     return u[:,t:], s, (locally_rigid_rank(v, d)-t)
@@ -231,7 +231,7 @@ def sample(sub_S_basis, sparse_param, params):
         for j, basis in enumerate(sub_S_basis):
             if basis.shape[0] == 0 and basis.shape[1] == 0:
                 continue
-            w = asmatrix(basis) * asmatrix(random.random((basis.shape[1], 1)))
+            w = asmatrix(basis) * asmatrix(random.uniform(size=(basis.shape[1], 1)))
             w /= norm(w)
             stress_samples[Es[j],i:i+1] += w
             

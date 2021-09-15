@@ -1,6 +1,4 @@
-from xml.dom.ext import *
-from xml.dom.ext.reader import Sax2
-from xml import xpath
+import amara
 from numpy import *
 from geo import *
 from util import *
@@ -8,17 +6,17 @@ from util import *
 def read_xys(nodes):
     p = asmatrix(zeros((2, len(nodes)), 'd'))
     for i, q in enumerate(nodes):
-        p[0, i] = float(q.getAttribute("x"))
-        p[1, i] = float(q.getAttribute("y"))
+        p[0, i] = float(q.x)
+        p[1, i] = float(q.y)
     return p
 
 def read_extents(nodes):
     p = asmatrix(zeros((2, len(nodes)*2), 'd'))
     for i, q in enumerate(nodes):
-        p[0, i*2] = float(q.getAttribute("minx"))
-        p[1, i*2] = float(q.getAttribute("miny"))
-        p[0, i*2+1] = float(q.getAttribute("maxx"))
-        p[1, i*2+1] = float(q.getAttribute("maxy"))
+        p[0, i*2] = float(q.minx)
+        p[1, i*2] = float(q.miny)
+        p[0, i*2+1] = float(q.maxx)
+        p[1, i*2+1] = float(q.maxy)
     return p
 
 def inside_bbox(p, bbox):
@@ -29,16 +27,13 @@ def inside_bbox(p, bbox):
     return True;
 
 class Floorplan:
-        
+
     def __init__(self, fn):
         print_info("Loading %s..." % fn)
-        f = open(fn)
-        r = Sax2.Reader()
-        doc = r.fromStream(f)
-        f.close()
+        doc = amara.parse(fn)
 
         # load in the floor
-        p = read_xys(xpath.Evaluate('floor[1]/contour/point', doc.documentElement))
+        p = read_xys(doc.MITquest.floor[0].contour.point)
         mi, ma = p.min(axis=1), p.max(axis=1)
         ma -= mi
         s = 1.0 / max(ma[0], ma[1])
@@ -50,14 +45,22 @@ class Floorplan:
         self.spaces = []
         self.portals = []
         self.blockers = []
-        for i in xrange(xpath.Evaluate('count(space)', doc.documentElement)):
-            p = read_xys(xpath.Evaluate('space[%d]/contour/point' % (i+1), doc.documentElement))
+        self.space_centroids = []
+        self.space_bbox = []
+        self.space_to_use = None
+        for i in xrange(len(doc.MITquest.space)):
+            space = doc.MITquest.space[i]
+            p = read_xys(space.contour.point)
             p = (T * homogenous_vectors(p))[:2,:]
             self.spaces.append(p)
             n = p.shape[1]
-            e = map(lambda node: float(node.getAttribute("index")),
-                    xpath.Evaluate('space[%d]/portal/edge' % (i+1), doc.documentElement))
-            self.portals.extend(map(lambda i: [p[:,(i)%n].T.A.ravel(), p[:,(i+1)%n].T.A.ravel()], e))
+            e = []
+            if ("portal" in dir(space)):
+                for portal in space.portal:
+                    if 'edge' in dir(portal):
+                        e.append(int(portal.edge.index))
+
+            self.portals.extend(map(lambda t: [p[:,t % n].T.A.ravel(), p[:,(t+1) % n].T.A.ravel()], e))
             e = set(e)
             b = []
             for j in xrange(n):
@@ -65,16 +68,11 @@ class Floorplan:
                     b.append([p[:,j], p[:,(j+1)%n]])
             self.blockers.append(b)
 
-            self.space_to_use = None
+            self.space_centroids.append(read_xys(space.contour.centroid))
+            self.space_bbox.append(read_extents(space.contour.extent))
 
-        # get bounding volumns for all spaces
-
-        self.space_centroids = (T * homogenous_vectors(read_xys(
-            xpath.Evaluate('space/contour/centroid', doc.documentElement))))[:2,:]
-
-        self.space_bbox = (T * homogenous_vectors(read_extents(
-            xpath.Evaluate('space/contour/extent', doc.documentElement))))[:2,:]
-        
+        self.space_centroids = (T * homogenous_vectors(hstack(tuple(self.space_centroids))))[:2,:]
+        self.space_bbox = (T * homogenous_vectors(hstack(tuple(self.space_bbox))))[:2,:]
 
     def inside(self, p):
         if self.space_to_use != None:
@@ -122,6 +120,21 @@ class Floorplan:
     def as_line_collection(self):
         return self.blockers_as_line_collection();
 
+def load_floorplan(fn):
+    try:
+        f = open(fn+".cache","rb")
+        thing = cPickle.load(f)
+        f.close()
+        return thing
+    except IOError, EOFError:
+        thing = Floorplan(fn)
+        f = open(fn+".cache","wb")
+        cPickle.dump(thing, f)
+        f.close()
+        return thing
+
+
+    
 if __name__ == '__main__':
 
     from matplotlib.collections import LineCollection
@@ -129,28 +142,29 @@ if __name__ == '__main__':
 
     figure(figsize=(8,8))
 
-    f = Floorplan('space.xml?10-2')
+    f = Floorplan("data/space.xml")
     min = f.floor.min(axis=1)
     max = f.floor.max(axis=1)
     col=['red','green','blue','yellow','purple','brown','orange']
     
     axis([min[0,0], max[0,0], min[1,0], max[1,0]])
+
     gca().add_collection(
         LineCollection(f.floor_as_line_collection(), color='blue', alpha=1, linewidth=0.6))
 
-    #gca().add_collection(
-    #    LineCollection(f.blockers_as_line_collection(), color='red', alpha=1, linewidth=0.6))
+    gca().add_collection(
+        LineCollection(f.blockers_as_line_collection(), color='red', alpha=1, linewidth=0.6))
 
     p = f.space_centroids
     for i in xrange(p.shape[1]):
         text(p[0,i], p[1,i], "%d" % i, horizontalalignment='center', verticalalignment='center', fontsize=6)
 
-    for i in xrange(len(f.spaces)):
-        gca().add_collection(
-            LineCollection(f.space_as_line_collection(i), color=col[i%len(col)], alpha=1, linewidth=0.3))
+    # for i in xrange(len(f.spaces)):
+    #     gca().add_collection(
+    #        LineCollection(f.space_as_line_collection(i), color=col[i%len(col)], alpha=1, linewidth=0.3))
     
-    ## gca().add_collection(
-    ##     LineCollection(f.portals_as_line_collection(), color='white', alpha=0.2, linewidth=0.8, zorder=10))
+    #gca().add_collection(
+    #     LineCollection(f.portals_as_line_collection(), color='white', alpha=0.2, linewidth=0.8, zorder=10))
 
     savefig("floor.eps")
     

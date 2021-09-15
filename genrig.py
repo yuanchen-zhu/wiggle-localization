@@ -58,13 +58,13 @@ class GenericRigidity:
             stress_basis = u[:,rigidity_rank:]
             
             for y in xrange(stress_iter):
-                w = stress_basis * asmatrix(random.random((e - rigidity_rank, 1)))
+                w = stress_basis * asmatrix(random.uniform(size=(e - rigidity_rank, 1)))
 
                 if norm(w) > eps:
                     w /= norm(w)
                 
                 omega = stress.matrix_from_vector(w, E, v)
-                kern, oev = stress.Kernel(omega).extract(d)
+                kern, oev = stress.Kernel(omega).extract_by_threshold(d)
                 if dim_K > kern.shape[1]+1:
                     dim_K = kern.shape[1]+1
                     self.K_basis = kern
@@ -92,6 +92,7 @@ class GenericSubstressRigidity:
         print_info('Calculating generic rigidity using substresses...')
 
         v, e = g.v, g.e
+
         p = random_p(g.v, g.d, None)
 
         print_info("\tComputing stress space for each subgraph")
@@ -120,9 +121,9 @@ class GenericSubstressRigidity:
 
 
         kern = stress.sample_kernel(g, ss)
-        K_basis, stress_spec = kern.extract(g.d, eps=1e-5)
-        #K_basis, stress_spec = stress.sample_kernel(g, ss, True, 1e-5)
+        K_basis, stress_spec = kern.extract_by_threshold(g.d, eps=1e-5)
 
         self.K_basis = K_basis
         self.dim_K = K_basis.shape[1]
         print_info('\tstress kernel dim = %d (min = %d)' % (self.dim_K, g.d))
+

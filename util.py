@@ -28,33 +28,48 @@ def print_info(s):
     global info_buffer
     info_buffer.append(s)
 
-def check_info(params):
+def get_sim_params_and_stats(hash_str):
+    f = open("%s/%s.result" % (S.DIR_PLOT, hash_str), "rb")
+    p = cPickle.load(f)             # the original param
+    stats = cPickle.load(f)
+    f.close()
+    return p, stats
+
+def check_info(params, output_params, override_graph):
     """ Check if [hash].info corresponding to the current settings
     exist and print if it does."""
 
     try:
-        fn = "%s/%s.info" % (S.DIR_PLOT, get_settings_hash(params))
+        fn = "%s/%s.info" % (S.DIR_PLOT, get_settings_hash(params, override_graph))
         f = open(fn, "rb")
         l = f.read()
         print "### Cached info %s present. Will skip actural run." %fn
-        print l
+        if not output_params.SKIP_PRINT_OLD:
+            print l
         f.close()
 
-
-        f = open("%s/%s.result" % (S.DIR_PLOT, get_settings_hash(params)), "rb")
+        fn = "%s/%s.result" % (S.DIR_PLOT, get_settings_hash(params, override_graph))
+        f = open(fn, "rb")
         p = cPickle.load(f)             # the original param
         stats = cPickle.load(f)
         f.close()
-        return stats
 
+        import os
+        mtime_stamp = os.path.getmtime(fn)
+
+        import datetime
+        mtime = datetime.datetime.fromtimestamp(mtime_stamp)
+
+        stats.mtime = mtime
+        return stats
     except IOError:
         return None
     except EOFError:
         return None
 
-def flush_info(params, stats):
+def flush_info(params, stats, graph_override):
     """ Flush info to [hash].info where hash is hash(settings) and write error to [hash].result"""
-    h = get_settings_hash(params)
+    h = get_settings_hash(params, graph_override)
     global info_buffer
     f = open("%s/%s.info" % (S.DIR_PLOT, h), "wb")
     for l in info_buffer:
@@ -68,17 +83,51 @@ def flush_info(params, stats):
     cPickle.dump(stats, f)
     f.close()
 
-def dump_settings():
+def dump_settings(params):
     import settings
     ss = get_module_consts(settings)
     print_info("Settings: ")
     for s in ss:
         print_info("\t%s :  %s" % (s[0], s[1]))
+    print_info("Parameters: ")
+    for s in get_object_consts(params):
+        print_info("\t%s :  %s" % (s[0], s[1]))
 
 
-def get_settings_hash(params):
+def flush_info(params, stats, graph_override):
+    """ Flush info to [hash].info where hash is hash(settings) and write error to [hash].result"""
+    h = get_settings_hash(params, graph_override)
+    global info_buffer
+    f = open("%s/%s.info" % (S.DIR_PLOT, h), "wb")
+    for l in info_buffer:
+        f.write(l)
+        f.write('\n')
+    f.close()
+    info_buffer = []
+    f = open("%s/%s.result" % (S.DIR_PLOT, h), "wb")
+    import cPickle
+    cPickle.dump(params, f)
+    cPickle.dump(stats, f)
+    f.close()
+
+def dump_settings(params):
     import settings
-    h = hash((tuple(get_object_consts(params)), tuple(get_module_consts(settings))))
+    ss = get_module_consts(settings)
+    print_info("Settings: ")
+    for s in ss:
+        print_info("\t%s :  %s" % (s[0], s[1]))
+    print_info("Parameters: ")
+    for s in get_object_consts(params):
+        print_info("\t%s :  %s" % (s[0], s[1]))
+
+
+def get_settings_hash(params, override_graph):
+    import settings
+    if not override_graph:
+        h = hash((tuple(get_object_consts(params)), tuple(get_module_consts(settings))))
+    else:
+        h = hash((tuple(get_object_consts(params)), tuple(get_module_consts(settings)), tuple(override_graph)))
+
     if h < 0:
         return '0'+str(-h)
     else:
@@ -92,8 +141,10 @@ def svd_conv(m):
         except LinAlgError:
             m = m + random.uniform(-1e-20, 1e-20, m.shape)
 
-def matrix_rank(m, eps = S.EPS):
-    u, s, vh = svd(m)
+def matrix_rank(m, eps = S.EPS, printS = False):
+    u, s, vh = svd_conv(m)
+    if printS:
+        print s
     return len(s[abs(s) > eps])
           
         
@@ -102,7 +153,7 @@ def random_p(v, d, sample_space_pred):
     for i in xrange(v):
         done = 0
         while not done:
-            q = asmatrix(random.random((d))).T
+            q = asmatrix(random.uniform(size=(d))).T
             if sample_space_pred == None or sample_space_pred(q):
                 done = 1
         p[:,i] = q
